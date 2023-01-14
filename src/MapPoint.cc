@@ -79,8 +79,8 @@ void MapPoint::SetWorldPos(const cv::Mat &Pos)
 
 cv::Mat MapPoint::GetWorldPos()
 {
-    unique_lock<mutex> lock(mMutexPos);
-    return mWorldPos.clone();
+    unique_lock<mutex> lock(mMutexPos); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexPos를 소유한다.
+    return mWorldPos.clone(); // 절대 좌표계인 world 좌표계 상의 map point의 position
 }
 
 cv::Mat MapPoint::GetNormal()
@@ -389,7 +389,7 @@ void MapPoint::UpdateNormalAndDepth()
     const int level = pRefKF->mvKeysUn[observations[pRefKF]].octave; // observations[pRefKF] -> 해당 map point가 reference keyframe의 몇 번째 keypoint인지
     // cv::KeyPoint::octave() -> 특징점이 추출된 옥타브(피라미드 단계)를 나타낸다.
     const float levelScaleFactor =  pRefKF->mvScaleFactors[level]; // 특징점이 추출된 ocatave에 해당하는 scale factor
-    const int nLevels = pRefKF->mnScaleLevels;
+    const int nLevels = pRefKF->mnScaleLevels; // 전체 level의 개수 -> nLevels = 8
 
     // Critical Section
     {

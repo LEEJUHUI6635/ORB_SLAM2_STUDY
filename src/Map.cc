@@ -95,7 +95,7 @@ vector<MapPoint*> Map::GetAllMapPoints()
     return vector<MapPoint*>(mspMapPoints.begin(),mspMapPoints.end()); // Q. overloading -> mspMapPoints의 처음부터 끝까지 vector 형태로 받아온다.
 }
 
-// map에 저장되어 있는 map point를 출력하는 함수 -> Q. map 전체? local map?
+// map에 저장되어 있는 map point를 출력하는 함수 -> Q. 전체 map? local map? A. 전체 map
 long unsigned int Map::MapPointsInMap()
 {
     unique_lock<mutex> lock(mMutexMap); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexMap을 소유한다.

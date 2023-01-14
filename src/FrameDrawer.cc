@@ -192,6 +192,7 @@ void FrameDrawer::Update(Tracking *pTracker) // Tracking class 자신
             {
                 if(!pTracker->mCurrentFrame.mvbOutlier[i]) // pTracker->mCurrentFrame.mvbOutlier[i] = false -> outlier가 아니라면,
                 {
+                    // for just Viewer
                     if(pMP->Observations()>0) // MapPoint::nObs > 0 -> map point와 association 관계가 있는 keypoint가 있다면,
                         mvbMap[i]=true; // Q. map point를 형성하는데 쓰이는 keypoint
                     else // MapPoint::nObs = 0 -> map point와 association 관계가 있는 keypoint가 없다면,

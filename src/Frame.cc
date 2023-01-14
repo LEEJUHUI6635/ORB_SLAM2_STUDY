@@ -397,8 +397,10 @@ void Frame::ComputeBoW()
     if(mBowVec.empty()) // 현재 frame의 BoW vector가 비어있다면,
     {
         // Converter::Descriptor(matrix) -> Descriptor(vector)
-        vector<cv::Mat> vCurrentDesc = Converter::toDescriptorVector(mDescriptors); // mDescriptors(matrix) -> 각각의 keypoint에 대응되는 descriptor
+        vector<cv::Mat> vCurrentDesc = Converter::toDescriptorVector(mDescriptors);
+        // mDescriptors -> matrix, mDescriptors의 row -> 각각의 keypoint에 대응되는 descriptor
         mpORBvocabulary->transform(vCurrentDesc,mBowVec,mFeatVec,4); // vCurrentDesc -> mBowVec(BoW vector), mFeatVec(feature vector)
+        // 현재 frame의 Frame::mpORBvocabulary는 현재 frame의 모든 keypoint에 대한 descriptor를 input으로 받아, 이에 해당하는 BoW vector와 feature vector를 추출하는 함수
     }
 }
 
