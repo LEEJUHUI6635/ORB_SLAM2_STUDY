@@ -150,7 +150,7 @@ map<KeyFrame*, size_t> MapPoint::GetObservations()
 int MapPoint::Observations()
 {
     unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
-    return nObs;
+    return nObs; // 해당 map point와 일치하는 keyframe의 keypoint 개수
 }
 
 void MapPoint::SetBadFlag()
@@ -327,8 +327,8 @@ void MapPoint::ComputeDistinctiveDescriptors()
 
 cv::Mat MapPoint::GetDescriptor()
 {
-    unique_lock<mutex> lock(mMutexFeatures);
-    return mDescriptor.clone();
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
+    return mDescriptor.clone(); // 하나의 map point가 관측되는 keyframe의 keypoint descriptor
 }
 
 int MapPoint::GetIndexInKeyFrame(KeyFrame *pKF)
@@ -403,14 +403,14 @@ void MapPoint::UpdateNormalAndDepth()
 
 float MapPoint::GetMinDistanceInvariance()
 {
-    unique_lock<mutex> lock(mMutexPos);
-    return 0.8f*mfMinDistance;
+    unique_lock<mutex> lock(mMutexPos); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexPos를 소유한다.
+    return 0.8f*mfMinDistance; // 0.8 * scale invariance distance
 }
 
 float MapPoint::GetMaxDistanceInvariance()
 {
-    unique_lock<mutex> lock(mMutexPos);
-    return 1.2f*mfMaxDistance;
+    unique_lock<mutex> lock(mMutexPos); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexPos를 소유한다.
+    return 1.2f*mfMaxDistance; // 1.2 * scale invariance distance
 }
 
 int MapPoint::PredictScale(const float &currentDist, KeyFrame* pKF)
@@ -430,11 +430,13 @@ int MapPoint::PredictScale(const float &currentDist, KeyFrame* pKF)
     return nScale;
 }
 
+// PredictScale(dist3D,&CurrentFrame)
+// Q. 이해 x
 int MapPoint::PredictScale(const float &currentDist, Frame* pF)
 {
     float ratio;
     {
-        unique_lock<mutex> lock(mMutexPos);
+        unique_lock<mutex> lock(mMutexPos); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexPos를 소유한다.
         ratio = mfMaxDistance/currentDist;
     }
 

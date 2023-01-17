@@ -98,8 +98,8 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     {
         ComputeImageBounds(imLeft);
 
-        mfGridElementWidthInv=static_cast<float>(FRAME_GRID_COLS)/(mnMaxX-mnMinX);
-        mfGridElementHeightInv=static_cast<float>(FRAME_GRID_ROWS)/(mnMaxY-mnMinY);
+        mfGridElementWidthInv=static_cast<float>(FRAME_GRID_COLS)/(mnMaxX-mnMinX); // 64/(mnMaxX-mnMinX)
+        mfGridElementHeightInv=static_cast<float>(FRAME_GRID_ROWS)/(mnMaxY-mnMinY); // 32/(mnMaxY-mnMinY)
 
         fx = K.at<float>(0,0);
         fy = K.at<float>(1,1);
@@ -209,8 +209,8 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     {
         ComputeImageBounds(imGray);
 
-        mfGridElementWidthInv=static_cast<float>(FRAME_GRID_COLS)/static_cast<float>(mnMaxX-mnMinX);
-        mfGridElementHeightInv=static_cast<float>(FRAME_GRID_ROWS)/static_cast<float>(mnMaxY-mnMinY);
+        mfGridElementWidthInv=static_cast<float>(FRAME_GRID_COLS)/static_cast<float>(mnMaxX-mnMinX); // 64/640 = 1/10
+        mfGridElementHeightInv=static_cast<float>(FRAME_GRID_ROWS)/static_cast<float>(mnMaxY-mnMinY); // 48/480 = 1/10
 
         fx = K.at<float>(0,0);
         fy = K.at<float>(1,1);
@@ -324,54 +324,59 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
     return true;
 }
 
+// (forward) u, v, radius, nLastOctave -> u, v : image boundaries, radius : search in a window
+// input : x, y, r, minLevel, maxLevel, output : vIndices
+// reprojected map point에 해당하는 feature를 찾기 위해 grid를 통해 빠르게 search하는 함수
 vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const float  &r, const int minLevel, const int maxLevel) const
 {
     vector<size_t> vIndices;
-    vIndices.reserve(N);
+    vIndices.reserve(N); // frame의 keypoint 개수
 
-    const int nMinCellX = max(0,(int)floor((x-mnMinX-r)*mfGridElementWidthInv));
-    if(nMinCellX>=FRAME_GRID_COLS)
-        return vIndices;
+    // Cell의 boundaries 계산 -> Cell의 크기 < grid의 크기
+    const int nMinCellX = max(0,(int)floor((x-mnMinX-r)*mfGridElementWidthInv)); // max(0, (x-r)/10)
+    if(nMinCellX>=FRAME_GRID_COLS) // 64
+        return vIndices; // vIndices = 0
 
-    const int nMaxCellX = min((int)FRAME_GRID_COLS-1,(int)ceil((x-mnMinX+r)*mfGridElementWidthInv));
+    const int nMaxCellX = min((int)FRAME_GRID_COLS-1,(int)ceil((x-mnMinX+r)*mfGridElementWidthInv)); // min(63, (x-r)/10)
     if(nMaxCellX<0)
-        return vIndices;
+        return vIndices; // vIndices = 0
 
-    const int nMinCellY = max(0,(int)floor((y-mnMinY-r)*mfGridElementHeightInv));
-    if(nMinCellY>=FRAME_GRID_ROWS)
-        return vIndices;
+    const int nMinCellY = max(0,(int)floor((y-mnMinY-r)*mfGridElementHeightInv)); // max(0, (y-r)/10)
+    if(nMinCellY>=FRAME_GRID_ROWS) // 48
+        return vIndices; // vIndices = 0
 
-    const int nMaxCellY = min((int)FRAME_GRID_ROWS-1,(int)ceil((y-mnMinY+r)*mfGridElementHeightInv));
+    const int nMaxCellY = min((int)FRAME_GRID_ROWS-1,(int)ceil((y-mnMinY+r)*mfGridElementHeightInv)); // min(47, (y-r)/10)
     if(nMaxCellY<0)
-        return vIndices;
+        return vIndices; // vIndices = 0
 
-    const bool bCheckLevels = (minLevel>0) || (maxLevel>=0);
+    const bool bCheckLevels = (minLevel>0) || (maxLevel>=0); // minLevel > 0 or maxLevel >= 0 -> bCheckLevels = true
 
+    // Cell의 boundary 내에서
     for(int ix = nMinCellX; ix<=nMaxCellX; ix++)
     {
         for(int iy = nMinCellY; iy<=nMaxCellY; iy++)
         {
-            const vector<size_t> vCell = mGrid[ix][iy];
+            const vector<size_t> vCell = mGrid[ix][iy]; // mGrid[ix][iy] -> 해당 grid에 존재하는 keypoint의 index
             if(vCell.empty())
-                continue;
+                continue; // 해당 for문을 빠져나가라.
 
-            for(size_t j=0, jend=vCell.size(); j<jend; j++)
+            for(size_t j=0, jend=vCell.size(); j<jend; j++) // 해당 grid에 존재하는 keypoint의 개수
             {
-                const cv::KeyPoint &kpUn = mvKeysUn[vCell[j]];
-                if(bCheckLevels)
+                const cv::KeyPoint &kpUn = mvKeysUn[vCell[j]]; // 해당 index에 존재하는 keypoint
+                if(bCheckLevels) // minLevel > 0 or maxLevel >= 0 -> bCheckLevels = true
                 {
-                    if(kpUn.octave<minLevel)
-                        continue;
+                    if(kpUn.octave<minLevel) // grid를 통해 추출한 keypoint의 octave < minLevel
+                        continue; // 해당 for문을 빠져나가라. -> vIndices에 포함 x
                     if(maxLevel>=0)
-                        if(kpUn.octave>maxLevel)
-                            continue;
+                        if(kpUn.octave>maxLevel) // grid를 통해 추출한 keypoint의 octave > maxLevel
+                            continue; // 해당 for문을 빠져나가라. -> vIndices에 포함 x
                 }
 
-                const float distx = kpUn.pt.x-x;
-                const float disty = kpUn.pt.y-y;
+                const float distx = kpUn.pt.x-x; // grid를 통해 추출한 keypoint - reprojected map point
+                const float disty = kpUn.pt.y-y; // grid를 통해 추출한 keypoint - reprojected map point
 
-                if(fabs(distx)<r && fabs(disty)<r)
-                    vIndices.push_back(vCell[j]);
+                if(fabs(distx)<r && fabs(disty)<r) // fabs() : 절대값
+                    vIndices.push_back(vCell[j]); // 해당 grid에 존재하는 keypoint의 index -> vIndices
             }
         }
     }
@@ -436,9 +441,10 @@ void Frame::UndistortKeyPoints()
     }
 }
 
+// left undistorted image boundaries 계산
 void Frame::ComputeImageBounds(const cv::Mat &imLeft)
 {
-    if(mDistCoef.at<float>(0)!=0.0)
+    if(mDistCoef.at<float>(0)!=0.0) // distorted image의 경우
     {
         cv::Mat mat(4,2,CV_32F);
         mat.at<float>(0,0)=0.0; mat.at<float>(0,1)=0.0;
@@ -457,12 +463,12 @@ void Frame::ComputeImageBounds(const cv::Mat &imLeft)
         mnMaxY = max(mat.at<float>(2,1),mat.at<float>(3,1));
 
     }
-    else
+    else // undistorted image의 경우
     {
         mnMinX = 0.0f;
-        mnMaxX = imLeft.cols;
+        mnMaxX = imLeft.cols; // left image의 width
         mnMinY = 0.0f;
-        mnMaxY = imLeft.rows;
+        mnMaxY = imLeft.rows; // left image의 height
     }
 }
 

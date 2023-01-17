@@ -172,13 +172,15 @@ vector<KeyFrame*> KeyFrame::GetVectorCovisibleKeyFrames()
     return mvpOrderedConnectedKeyFrames;
 }
 
+// 해당 keyframe의 covisibility graph 상에서의 neighbors를 찾는 함수
 vector<KeyFrame*> KeyFrame::GetBestCovisibilityKeyFrames(const int &N)
 {
-    unique_lock<mutex> lock(mMutexConnections);
-    if((int)mvpOrderedConnectedKeyFrames.size()<N)
+    unique_lock<mutex> lock(mMutexConnections); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexConnections를 소유한다.
+    if((int)mvpOrderedConnectedKeyFrames.size()<N) // mvpOrderedConnectedKeyFrames -> covisibility graph 상에서 연결되어 있는 keyframe들을 weight 순으로 ordering
         return mvpOrderedConnectedKeyFrames;
-    else
+    else // covisibility graph 상에서 연결되어 있는 keyframe들을 weight 순으로 ordering한 list의 size >= N
         return vector<KeyFrame*>(mvpOrderedConnectedKeyFrames.begin(),mvpOrderedConnectedKeyFrames.begin()+N);
+        // covisibility graph 상에서 연결되어 있는 keyframe들을 weight 순으로 N개 추출
 
 }
 

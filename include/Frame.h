@@ -156,9 +156,10 @@ public:
     std::vector<bool> mvbOutlier; // outlier라면 true, 아니라면 false
 
     // Keypoints are assigned to cells in a grid to reduce matching complexity when projecting MapPoints.
-    static float mfGridElementWidthInv;
-    static float mfGridElementHeightInv;
-    std::vector<std::size_t> mGrid[FRAME_GRID_COLS][FRAME_GRID_ROWS];
+    static float mfGridElementWidthInv; // 64/640 = 1/10
+    static float mfGridElementHeightInv;// 48/480 = 1/10 
+    std::vector<std::size_t> mGrid[FRAME_GRID_COLS][FRAME_GRID_ROWS]; // mGrid[64][48]
+    // mGrid[i][j] -> 해당 grid에 존재하는 keypoint의 index
 
     // Camera pose.
     cv::Mat mTcw; // world to camera coordinate

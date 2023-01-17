@@ -117,43 +117,45 @@ PnPsolver::~PnPsolver()
   delete [] pcs;
 }
 
-
+// SetRansacParameters(0.99,10,300,4,0.5,5.991)
 void PnPsolver::SetRansacParameters(double probability, int minInliers, int maxIterations, int minSet, float epsilon, float th2)
 {
-    mRansacProb = probability;
-    mRansacMinInliers = minInliers;
-    mRansacMaxIts = maxIterations;
-    mRansacEpsilon = epsilon;
-    mRansacMinSet = minSet;
+    mRansacProb = probability; // RANSAC probability
+    mRansacMinInliers = minInliers; // RANSAC min inliers
+    mRansacMaxIts = maxIterations; // RANSAC max iterations
+    mRansacEpsilon = epsilon; // RANSAC expected inliers/total ratio
+    mRansacMinSet = minSet; // RANSAC minimum set used at each iteration
 
     N = mvP2D.size(); // number of correspondences
-
-    mvbInliersi.resize(N);
+    // mvP2D -> 2D points
+    mvbInliersi.resize(N); // 2D points의 개수만큼 resize
 
     // Adjust Parameters according to number of correspondences
-    int nMinInliers = N*mRansacEpsilon;
-    if(nMinInliers<mRansacMinInliers)
-        nMinInliers=mRansacMinInliers;
-    if(nMinInliers<minSet)
-        nMinInliers=minSet;
-    mRansacMinInliers = nMinInliers;
+    int nMinInliers = N*mRansacEpsilon; // 2D points 개수 x inliers/total ratio = 최소한 추출되어야 하는 inlier의 총 개수
+    if(nMinInliers<mRansacMinInliers) // inlier의 총 개수 < hyperparameter인 RANSAC min inliers
+        nMinInliers=mRansacMinInliers; // inlier의 총 개수 <- hyperparameter인 RANSAC min inliers
+    if(nMinInliers<minSet) // inlier의 총 개수 < 각 iteration에서 RANSAC minimum set
+        nMinInliers=minSet; // inlier의 총 개수 <- hyperparameter인 RANSAC minimum set used at each iteration
+    mRansacMinInliers = nMinInliers; // RANSAC min inliers <- inlier의 총 개수
 
-    if(mRansacEpsilon<(float)mRansacMinInliers/N)
-        mRansacEpsilon=(float)mRansacMinInliers/N;
+    if(mRansacEpsilon<(float)mRansacMinInliers/N) // hyperparameter인 inliers/total ratio < RANSAC min inliers/2D points 개수
+        mRansacEpsilon=(float)mRansacMinInliers/N; // hyperparameter인 inliers/total ratio <- RANSAC min inliers/2D points 개수
 
     // Set RANSAC iterations according to probability, epsilon, and max iterations
     int nIterations;
 
-    if(mRansacMinInliers==N)
+    if(mRansacMinInliers==N) // 모든 2D points가 inliers라면,
         nIterations=1;
-    else
-        nIterations = ceil(log(1-mRansacProb)/log(1-pow(mRansacEpsilon,3)));
+    else // 모든 2D points가 inliers가 아니라면,
+        nIterations = ceil(log(1-mRansacProb)/log(1-pow(mRansacEpsilon,3))); // 기존 RANSAC의 iteration 공식
 
-    mRansacMaxIts = max(1,min(nIterations,mRansacMaxIts));
+    mRansacMaxIts = max(1,min(nIterations,mRansacMaxIts)); // RANSAC max iterations <- min(nIterations, mRansacMaxIts) >= 1
 
-    mvMaxError.resize(mvSigma2.size());
+    // mvMaxError : Max square error associated with scale level. Max error = th*th*sigma(level)*sigma(level)
+    // ORB feature의 scale level에 따른 error -> error가 작은 순으로 matching이 이루어질 것이다.
+    mvMaxError.resize(mvSigma2.size()); // mvSigma2 = sigma(level) * sigma(level)
     for(size_t i=0; i<mvSigma2.size(); i++)
-        mvMaxError[i] = mvSigma2[i]*th2;
+        mvMaxError[i] = mvSigma2[i]*th2; // th2 = th * th = 5.991
 }
 
 cv::Mat PnPsolver::find(vector<bool> &vbInliers, int &nInliers)
@@ -162,15 +164,17 @@ cv::Mat PnPsolver::find(vector<bool> &vbInliers, int &nInliers)
     return iterate(mRansacMaxIts,bFlag,vbInliers,nInliers);    
 }
 
+// iterate(5,bNoMore,vbInliers,nInliers)
 cv::Mat PnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers)
 {
+    // 초기화 수행
     bNoMore = false;
     vbInliers.clear();
     nInliers=0;
 
-    set_maximum_number_of_correspondences(mRansacMinSet);
+    set_maximum_number_of_correspondences(mRansacMinSet); // mRansacMinSet -> maximum_number_of_correspondences
 
-    if(N<mRansacMinInliers)
+    if(N<mRansacMinInliers) // number of correspondences < RANSAC min inliers
     {
         bNoMore = true;
         return cv::Mat();
@@ -179,25 +183,29 @@ cv::Mat PnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInlie
     vector<size_t> vAvailableIndices;
 
     int nCurrentIterations = 0;
-    while(mnIterations<mRansacMaxIts || nCurrentIterations<nIterations)
+    while(mnIterations<mRansacMaxIts || nCurrentIterations<nIterations) // current RANSAC state < RANSAC max iterations or 5번 iteration 이하
     {
         nCurrentIterations++;
-        mnIterations++;
-        reset_correspondences();
+        mnIterations++; // current RANSAC state
+        reset_correspondences(); // number_of_correspondences = 0 -> 한 번의 iteration마다 초기화
 
+        // mvAllIndices -> Indices for random selection [0 .. N-1]
         vAvailableIndices = mvAllIndices;
 
         // Get min set of points
-        for(short i = 0; i < mRansacMinSet; ++i)
+        // 현재 frame의 2D points - i번째 relocalization keyframe candidate keyframe의 map point와 유사한 현재 frame의 map points(3D)
+        // map points와 2D points random으로 추출
+        for(short i = 0; i < mRansacMinSet; ++i) // RANSAC minimum set used at each iteration
         {
-            int randi = DUtils::Random::RandomInt(0, vAvailableIndices.size()-1);
+            int randi = DUtils::Random::RandomInt(0, vAvailableIndices.size()-1); // returns a random int in the range [min..max]
 
-            int idx = vAvailableIndices[randi];
+            int idx = vAvailableIndices[randi]; // vAvailableIndices에서 random index의 값 추출 -> random index
 
-            add_correspondence(mvP3Dw[idx].x,mvP3Dw[idx].y,mvP3Dw[idx].z,mvP2D[idx].x,mvP2D[idx].y);
+            // mvP3Dw -> 3D points, mvP2D -> 2D points
+            add_correspondence(mvP3Dw[idx].x,mvP3Dw[idx].y,mvP3Dw[idx].z,mvP2D[idx].x,mvP2D[idx].y); // pws(3D points), us(2D points) vector
 
-            vAvailableIndices[randi] = vAvailableIndices.back();
-            vAvailableIndices.pop_back();
+            vAvailableIndices[randi] = vAvailableIndices.back(); // back() : 벡터의 마지막 요소를 반환한다. 
+            vAvailableIndices.pop_back(); // pop_back() : 맨 뒤의 요소를 삭제한다. -> 중복 x
         }
 
         // Compute camera pose
@@ -338,16 +346,17 @@ void PnPsolver::CheckInliers()
     }
 }
 
-
+// set_maximum_number_of_correspondences(mRansacMinSet)
 void PnPsolver::set_maximum_number_of_correspondences(int n)
 {
+  // maximum_number_of_correspondences < mRansacMinSet -> 초기화 수행
   if (maximum_number_of_correspondences < n) {
     if (pws != 0) delete [] pws;
     if (us != 0) delete [] us;
     if (alphas != 0) delete [] alphas;
     if (pcs != 0) delete [] pcs;
 
-    maximum_number_of_correspondences = n;
+    maximum_number_of_correspondences = n; // mRansacMinSet -> maximum_number_of_correspondences
     pws = new double[3 * maximum_number_of_correspondences];
     us = new double[2 * maximum_number_of_correspondences];
     alphas = new double[4 * maximum_number_of_correspondences];
@@ -360,12 +369,15 @@ void PnPsolver::reset_correspondences(void)
   number_of_correspondences = 0;
 }
 
+// add_correspondence(mvP3Dw[idx].x,mvP3Dw[idx].y,mvP3Dw[idx].z,mvP2D[idx].x,mvP2D[idx].y)
 void PnPsolver::add_correspondence(double X, double Y, double Z, double u, double v)
 {
+  // 3D points -> pws = [X, Y, Z, X, Y, Z, ...]
   pws[3 * number_of_correspondences    ] = X;
   pws[3 * number_of_correspondences + 1] = Y;
   pws[3 * number_of_correspondences + 2] = Z;
 
+  // 2D points -> us = [u, v, u, v, ...]
   us[2 * number_of_correspondences    ] = u;
   us[2 * number_of_correspondences + 1] = v;
 

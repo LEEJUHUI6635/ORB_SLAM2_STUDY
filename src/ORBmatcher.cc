@@ -1352,6 +1352,7 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
 }
 
 // SearchByProjection(mCurrentFrame,mLastFrame,th,mSensor==System::MONOCULAR)
+// 지난 frame의 map points를 현재 frame에 projection
 int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, const float th, const bool bMono)
 {
     int nmatches = 0;
@@ -1408,33 +1409,34 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
                 int nLastOctave = LastFrame.mvKeys[i].octave; // 지난 frame 상의 keypoint가 어떠한 scale에서 추출 되었는가
 
                 // Search in a window. Size depends on scale
-                float radius = th*CurrentFrame.mvScaleFactors[nLastOctave];
+                float radius = th*CurrentFrame.mvScaleFactors[nLastOctave]; // Q.
 
                 vector<size_t> vIndices2;
 
+                // GetFeaturesInArea : projected map point와 일치할 확률에 가까운 keypoint의 index를 구한다. 
                 if(bForward) // 전진하는 경우
-                    vIndices2 = CurrentFrame.GetFeaturesInArea(u,v, radius, nLastOctave);
+                    vIndices2 = CurrentFrame.GetFeaturesInArea(u,v, radius, nLastOctave); // minLevel = nLastOctave -> 전진하는 경우, 특정 feature에 더 가까워지기 때문
                 else if(bBackward) // 후진하는 경우
-                    vIndices2 = CurrentFrame.GetFeaturesInArea(u,v, radius, 0, nLastOctave);
+                    vIndices2 = CurrentFrame.GetFeaturesInArea(u,v, radius, 0, nLastOctave); // minLevel = 0, maxLevel = nLastOctave -> 후진하는 경우, 특정 feature에서 더 멀어지기 때문
                 else
-                    vIndices2 = CurrentFrame.GetFeaturesInArea(u,v, radius, nLastOctave-1, nLastOctave+1);
+                    vIndices2 = CurrentFrame.GetFeaturesInArea(u,v, radius, nLastOctave-1, nLastOctave+1); // minLevel = nLastOctave-1, maxLevel = nLastOctave+1 -> feature들은 비슷한 scale을 가질 것이기 때문
 
                 if(vIndices2.empty())
-                    continue;
+                    continue; // 해당 for문을 빠져나가라.
 
-                const cv::Mat dMP = pMP->GetDescriptor();
+                const cv::Mat dMP = pMP->GetDescriptor(); // 특정 map point가 관측되는 keyframe의 keypoint descriptor
 
-                int bestDist = 256;
+                int bestDist = 256; // 가장 큰 descriptor distance
                 int bestIdx2 = -1;
 
                 for(vector<size_t>::const_iterator vit=vIndices2.begin(), vend=vIndices2.end(); vit!=vend; vit++)
                 {
-                    const size_t i2 = *vit;
-                    if(CurrentFrame.mvpMapPoints[i2])
-                        if(CurrentFrame.mvpMapPoints[i2]->Observations()>0)
-                            continue;
+                    const size_t i2 = *vit; // 반복자 pointer de-reference
+                    if(CurrentFrame.mvpMapPoints[i2]) // 해당 keypoint를 갖는 현재 frame의 map point가 존재한다면,
+                        if(CurrentFrame.mvpMapPoints[i2]->Observations()>0) // 해당 map point와 일치하는 keyframe의 keypoint가 존재한다면,
+                            continue; // 해당 for문을 빠져나가라.
 
-                    if(CurrentFrame.mvuRight[i2]>0)
+                    if(CurrentFrame.mvuRight[i2]>0) // Q. RGB-D
                     {
                         const float ur = u - CurrentFrame.mbf*invzc;
                         const float er = fabs(ur - CurrentFrame.mvuRight[i2]);
@@ -1442,10 +1444,11 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
                             continue;
                     }
 
-                    const cv::Mat &d = CurrentFrame.mDescriptors.row(i2);
+                    const cv::Mat &d = CurrentFrame.mDescriptors.row(i2); // reprojected map points와 유사한 keypoint(같은 grid 내의 keypoint)의 descriptor
 
-                    const int dist = DescriptorDistance(dMP,d);
-
+                    const int dist = DescriptorDistance(dMP,d); // map point의 descriptor - reprojected map points와 유사한 keypoint의 descriptor
+                    
+                    // 해당 map point의 descriptor에 가장 유사한, reprojected map points와 유사한 keypoint의 descriptor를 찾는다.
                     if(dist<bestDist)
                     {
                         bestDist=dist;
@@ -1453,21 +1456,21 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
                     }
                 }
 
-                if(bestDist<=TH_HIGH)
+                if(bestDist<=TH_HIGH) // TH_HIGH = 100
                 {
-                    CurrentFrame.mvpMapPoints[bestIdx2]=pMP;
-                    nmatches++;
+                    CurrentFrame.mvpMapPoints[bestIdx2]=pMP; // 지난 frame의 map point -> 현재 frame의 mvpMapPoints vector
+                    nmatches++; // 지난 frame의 map point와 겹치는 현재 frame의 map point 개수
 
-                    if(mbCheckOrientation)
+                    if(mbCheckOrientation) // mbCheckOrientation = true
                     {
-                        float rot = LastFrame.mvKeysUn[i].angle-CurrentFrame.mvKeysUn[bestIdx2].angle;
-                        if(rot<0.0)
+                        float rot = LastFrame.mvKeysUn[i].angle-CurrentFrame.mvKeysUn[bestIdx2].angle; // 지난 frame 상의 keypoint의 angle - 현재 frame 상의 keypoint의 angle
+                        if(rot<0.0) // 현재 frame 상의 keypoint의 angle > 지난 frame 상의 keypoint의 angle
                             rot+=360.0f;
-                        int bin = round(rot*factor);
+                        int bin = round(rot*factor); // rot / 30
                         if(bin==HISTO_LENGTH)
                             bin=0;
-                        assert(bin>=0 && bin<HISTO_LENGTH);
-                        rotHist[bin].push_back(bestIdx2);
+                        assert(bin>=0 && bin<HISTO_LENGTH); // assert(조건식) -> 조건식이 거짓일 경우 프로그램 실행 도중 프로그램을 중단한다.
+                        rotHist[bin].push_back(bestIdx2); // 해당 keypoint의 index -> rotHist[bin]
                     }
                 }
             }
@@ -1475,106 +1478,117 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
     }
 
     //Apply rotation consistency
-    if(mbCheckOrientation)
+    if(mbCheckOrientation) // mbCheckOrientation = true
     {
         int ind1=-1;
         int ind2=-1;
         int ind3=-1;
 
-        ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3);
+        ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3); // rotHist histogram에서 첫 번째로 빈도수가 높은 word의 index, 두 번째로 빈도수가 높은 word의 index,
+        // 세 번째로 빈도수가 높은 word의 index를 추출한다.
 
-        for(int i=0; i<HISTO_LENGTH; i++)
+        for(int i=0; i<HISTO_LENGTH; i++) // 30개의 word에 대하여 반복
         {
-            if(i!=ind1 && i!=ind2 && i!=ind3)
+            if(i!=ind1 && i!=ind2 && i!=ind3) // 첫 번째로 빈도수가 높은 word, 두 번째로 빈도수가 높은 word, 세 번째로 빈도수가 높은 word에 속하지 않는다면,
             {
-                for(size_t j=0, jend=rotHist[i].size(); j<jend; j++)
+                for(size_t j=0, jend=rotHist[i].size(); j<jend; j++) // 해당하는 word에 속하는 keypoint의 개수만큼 반복
                 {
-                    CurrentFrame.mvpMapPoints[rotHist[i][j]]=static_cast<MapPoint*>(NULL);
-                    nmatches--;
+                    CurrentFrame.mvpMapPoints[rotHist[i][j]]=static_cast<MapPoint*>(NULL); // rotHist[i][j] -> 해당하는 word에 속하는 keypoint의 index
+                    nmatches--; // keypoint의 rotation 속성이 다르면, match에서 배제하라.
                 }
             }
         }
     }
 
-    return nmatches;
+    return nmatches; // 지난 frame의 map point와 일치하거나, 유사한 현재 frame의 map point의 개수
 }
 
+// SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,10,100) -> vpCandidateKFs[i] : i번째 relocalization candidate keyframe,
+// sFound : 특정 keyframe의 map points와 유사한 현재 frame의 map points 중 inlier points, th = 10, ORBdist = 100
 int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set<MapPoint*> &sAlreadyFound, const float th , const int ORBdist)
 {
     int nmatches = 0;
 
-    const cv::Mat Rcw = CurrentFrame.mTcw.rowRange(0,3).colRange(0,3);
-    const cv::Mat tcw = CurrentFrame.mTcw.rowRange(0,3).col(3);
-    const cv::Mat Ow = -Rcw.t()*tcw;
+    const cv::Mat Rcw = CurrentFrame.mTcw.rowRange(0,3).colRange(0,3); // 현재 frame의 world to camera coordinate pose의 rotation 
+    const cv::Mat tcw = CurrentFrame.mTcw.rowRange(0,3).col(3); // 현재 frame의 world to camera coordinate pose의 translation
+    const cv::Mat Ow = -Rcw.t()*tcw; // 현재 frame의 camera to world coordinate pose의 translation -> world 좌표계 상의 camera position 
 
     // Rotation Histogram (to check rotation consistency)
-    vector<int> rotHist[HISTO_LENGTH];
-    for(int i=0;i<HISTO_LENGTH;i++)
-        rotHist[i].reserve(500);
+    vector<int> rotHist[HISTO_LENGTH]; // rotHist[30] -> rotation histogram
+    for(int i=0;i<HISTO_LENGTH;i++) // 30만큼 반복
+        rotHist[i].reserve(500); // rotHist[30][500]
     const float factor = 1.0f/HISTO_LENGTH;
 
-    const vector<MapPoint*> vpMPs = pKF->GetMapPointMatches();
+    const vector<MapPoint*> vpMPs = pKF->GetMapPointMatches(); // i번째 relocalization candidate keyframe 상의 keypoints에 해당하는 map points
 
-    for(size_t i=0, iend=vpMPs.size(); i<iend; i++)
+    for(size_t i=0, iend=vpMPs.size(); i<iend; i++) // i번째 relocalization candidate keyframe의 map points 개수만큼 반복
     {
         MapPoint* pMP = vpMPs[i];
 
-        if(pMP)
+        if(pMP) // 해당 map point가 존재한다면,
         {
             if(!pMP->isBad() && !sAlreadyFound.count(pMP))
+            // pMP->isBad() = false and sAlreadyFound.count(pMP) = false -> 해당 map point가 나쁘지 않다고 판단되고 적절한 correspondence가 발견되지 map point라면,
             {
                 //Project
-                cv::Mat x3Dw = pMP->GetWorldPos();
-                cv::Mat x3Dc = Rcw*x3Dw+tcw;
+                cv::Mat x3Dw = pMP->GetWorldPos(); // 절대 좌표계인 world 좌표계 상의 map point의 position
+                cv::Mat x3Dc = Rcw*x3Dw+tcw; // world to camera coordinate x world 좌표계 상의 map point = camera 좌표계 상의 map point
 
-                const float xc = x3Dc.at<float>(0);
-                const float yc = x3Dc.at<float>(1);
-                const float invzc = 1.0/x3Dc.at<float>(2);
+                const float xc = x3Dc.at<float>(0); // camera 좌표계 상의 x 좌표
+                const float yc = x3Dc.at<float>(1); // camera 좌표계 상의 y 좌표
+                const float invzc = 1.0/x3Dc.at<float>(2); // 1 / camera 좌표계 상의 z 좌표
 
-                const float u = CurrentFrame.fx*xc*invzc+CurrentFrame.cx;
-                const float v = CurrentFrame.fy*yc*invzc+CurrentFrame.cy;
-
+                const float u = CurrentFrame.fx*xc*invzc+CurrentFrame.cx; // xc*invzc : normalized plane 상의 x 좌표 -> pixel 좌표계 상의 x 좌표
+                const float v = CurrentFrame.fy*yc*invzc+CurrentFrame.cy; // yc*invzc : normalized plane 상의 y 좌표 -> pixel 좌표계 상의 y 좌표
+                
+                // image boundary를 벗어나는 map point 고려 x
                 if(u<CurrentFrame.mnMinX || u>CurrentFrame.mnMaxX)
-                    continue;
+                    continue; // 해당 for문을 빠져나가라.
                 if(v<CurrentFrame.mnMinY || v>CurrentFrame.mnMaxY)
-                    continue;
+                    continue; // 해당 for문을 빠져나가라.
 
                 // Compute predicted scale level
-                cv::Mat PO = x3Dw-Ow;
-                float dist3D = cv::norm(PO);
-
-                const float maxDistance = pMP->GetMaxDistanceInvariance();
-                const float minDistance = pMP->GetMinDistanceInvariance();
+                cv::Mat PO = x3Dw-Ow; // image optical center - map point
+                float dist3D = cv::norm(PO); // normalized distance(image optical center - map point)
+                
+                // scale invariance distances
+                const float maxDistance = pMP->GetMaxDistanceInvariance(); // 1.2f*mfMaxDistance
+                const float minDistance = pMP->GetMinDistanceInvariance(); // 0.8f*mfMinDistance
 
                 // Depth must be inside the scale pyramid of the image
+                // normalized distance가 scale invariance distances를 벗어나는 map point 고려 x
                 if(dist3D<minDistance || dist3D>maxDistance)
-                    continue;
+                    continue; // 해당 for문을 빠져나가라.
 
-                int nPredictedLevel = pMP->PredictScale(dist3D,&CurrentFrame);
+                int nPredictedLevel = pMP->PredictScale(dist3D,&CurrentFrame); // 해당 map point의 predicted scale
 
                 // Search in a window
-                const float radius = th*CurrentFrame.mvScaleFactors[nPredictedLevel];
+                const float radius = th*CurrentFrame.mvScaleFactors[nPredictedLevel]; // th * 해당 map point의 predicted scale의 scale factor = radius
 
+                // (비슷한 scale 범위에서) reprojected map point에 해당하는 feature를 찾기 위해 grid를 통해 빠르게 search하는 함수
+                // output : 해당 grid에 존재하는 keypoint의 index
                 const vector<size_t> vIndices2 = CurrentFrame.GetFeaturesInArea(u, v, radius, nPredictedLevel-1, nPredictedLevel+1);
 
-                if(vIndices2.empty())
-                    continue;
+                if(vIndices2.empty()) // grid search를 통해 찾은 keypoint가 없다면,
+                    continue; // 해당 for문을 빠져나가라.
 
-                const cv::Mat dMP = pMP->GetDescriptor();
+                const cv::Mat dMP = pMP->GetDescriptor(); // 해당 map point가 관측되는 keyframe의 keypoint descriptor
 
-                int bestDist = 256;
+                int bestDist = 256; // descriptor의 최대 distance
                 int bestIdx2 = -1;
 
+                // grid search를 통해 찾은, map point
                 for(vector<size_t>::const_iterator vit=vIndices2.begin(); vit!=vIndices2.end(); vit++)
                 {
-                    const size_t i2 = *vit;
-                    if(CurrentFrame.mvpMapPoints[i2])
-                        continue;
+                    const size_t i2 = *vit; // de-reference -> keypoint의 index
+                    if(CurrentFrame.mvpMapPoints[i2]) // 해당 (frame 상의 keypoint에 해당하는)map point가 존재하면,
+                        continue; // 해당 for문을 빠져나가라.
 
-                    const cv::Mat &d = CurrentFrame.mDescriptors.row(i2);
+                    const cv::Mat &d = CurrentFrame.mDescriptors.row(i2); // 현재 frame의 i2번째 descriptor
 
-                    const int dist = DescriptorDistance(dMP,d);
-
+                    const int dist = DescriptorDistance(dMP,d); // map point에 해당하는 keypoint descriptor - grid search로 찾은 keypoint descriptor
+                    
+                    // map point에 해당하는 keypoint descriptor에 가장 유사한, grid search로 찾은 keypoint descriptor
                     if(dist<bestDist)
                     {
                         bestDist=dist;
@@ -1582,21 +1596,22 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set
                     }
                 }
 
+                // ORBdist = 100
                 if(bestDist<=ORBdist)
                 {
-                    CurrentFrame.mvpMapPoints[bestIdx2]=pMP;
+                    CurrentFrame.mvpMapPoints[bestIdx2]=pMP; // pMP -> 현재 frame의 mvpMapPoints vector
                     nmatches++;
 
-                    if(mbCheckOrientation)
+                    if(mbCheckOrientation) // mbCheckOrientation = true
                     {
-                        float rot = pKF->mvKeysUn[i].angle-CurrentFrame.mvKeysUn[bestIdx2].angle;
+                        float rot = pKF->mvKeysUn[i].angle-CurrentFrame.mvKeysUn[bestIdx2].angle; // keyframe 상의 i번째 keypoint의 angle - 현재 frame 상의 i번째 keypoint의 angle
                         if(rot<0.0)
                             rot+=360.0f;
-                        int bin = round(rot*factor);
+                        int bin = round(rot*factor); // rot / 30
                         if(bin==HISTO_LENGTH)
                             bin=0;
-                        assert(bin>=0 && bin<HISTO_LENGTH);
-                        rotHist[bin].push_back(bestIdx2);
+                        assert(bin>=0 && bin<HISTO_LENGTH); // 0 <= bin < 30 -> index
+                        rotHist[bin].push_back(bestIdx2); // rotHist[bin][500] -> bestIdx2, bestIdx2, ...
                     }
                 }
 
@@ -1604,19 +1619,19 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set
         }
     }
 
-    if(mbCheckOrientation)
+    if(mbCheckOrientation) // mbCheckOrientation = true
     {
         int ind1=-1;
         int ind2=-1;
         int ind3=-1;
 
-        ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3);
+        ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3); // rotHist histogram에서 첫 번째로 빈도수가 높은 word, 두 번째로 빈도수가 높은 word, 세 번째로 빈도수가 높은 word의 index를 추출
 
-        for(int i=0; i<HISTO_LENGTH; i++)
+        for(int i=0; i<HISTO_LENGTH; i++) // 30만큼 반복
         {
-            if(i!=ind1 && i!=ind2 && i!=ind3)
+            if(i!=ind1 && i!=ind2 && i!=ind3) // 첫 번째 빈도수가 높은 word, 두 번째로 빈도수가 높은 word, 세 번째로 빈도수가 높은 word에 속하지 않는다면,
             {
-                for(size_t j=0, jend=rotHist[i].size(); j<jend; j++)
+                for(size_t j=0, jend=rotHist[i].size(); j<jend; j++) // rotHist[i](i번째 word)에 속하는 모든 descriptor의 index
                 {
                     CurrentFrame.mvpMapPoints[rotHist[i][j]]=NULL;
                     nmatches--;
