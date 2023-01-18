@@ -206,22 +206,26 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
     {
         unique_lock<mutex> lock(mMutex); // unique_lock class의 객체인 lock은 mutex 객체인 mMutex를 소유한다.
 
-        // DBoW2::BowVector -> std::map<WordId, WordValue>
+        // DBoW2::BowVector -> std::map<WordId, WordValue>, word value -> 한 이미지 내에서 word의 빈도수
         for(DBoW2::BowVector::const_iterator vit=F->mBowVec.begin(), vend=F->mBowVec.end(); vit != vend; vit++)
         {
+            // mnInvertedFile = inverse index
             list<KeyFrame*> &lKFs =   mvInvertedFile[vit->first]; // 특정한 word id에 해당하는 keyframes -> lKFs
-
-            for(list<KeyFrame*>::iterator lit=lKFs.begin(), lend= lKFs.end(); lit!=lend; lit++)
+            // 1개의 word id -> 여러 개의 keyframe
+            for(list<KeyFrame*>::iterator lit=lKFs.begin(), lend= lKFs.end(); lit!=lend; lit++) // 특정한 word id에 속하는 keyframe의 개수만큼 반복
             {
                 KeyFrame* pKFi=*lit; // de-reference -> 특정한 word id에 해당하는 keyframe
-                // Q. 특정 frame이 처음으로 BoW에 접근하였다면,
+                // 특정 frame이 처음으로 BoW에 접근하였다면,
                 if(pKFi->mnRelocQuery!=F->mnId) // 특정한 word id에 해당하는 keyframe의 mnRelocQuery가 frame의 id와 일치하지 않는다면,
                 {
                     pKFi->mnRelocWords=0; // 특정한 word id에 해당하는 keyframe의 mnRelocWords를 초기화
                     pKFi->mnRelocQuery=F->mnId; // frame의 id -> 특정한 word id에 해당하는 keyframe의 mnRelocQuery
-                    lKFsSharingWords.push_back(pKFi); // 특정한 word id에 해당하는 keyframe -> lKFsSharingWords list
+                    lKFsSharingWords.push_back(pKFi);
+                    // 중복 방지 -> 여러 개의 word id에는 여러 개의 keyframe들이 중복되어 있을 것이다.
                 }
                 pKFi->mnRelocWords++; // mnRelocWords -> 해당 keyframe과 현재 frame이 공유하는 relocalization words의 개수
+                // 여러 word id에 대하여 반복문을 수행하면, 이전에 나왔던 keyframe이 반복하여 나오는데 이를 반영하기 위함
+                // 해당 keyframe이 현재 frame과 중복되는 relocalization words의 개수
             }
         }
     }
@@ -230,8 +234,8 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
 
     // Only compare against those keyframes that share enough words
     int maxCommonWords=0;
-    // lKFsSharingWords list -> 특정한 word를 공유하는 keyframe
-    for(list<KeyFrame*>::iterator lit=lKFsSharingWords.begin(), lend= lKFsSharingWords.end(); lit!=lend; lit++)
+    // lKFsSharingWords list -> 현재 frame과 word를 공유하고 있는 모든 keyframe
+    for(list<KeyFrame*>::iterator lit=lKFsSharingWords.begin(), lend= lKFsSharingWords.end(); lit!=lend; lit++) // 현재 frame과 word를 공유하고 있는 모든 keyframe의 개수만큼 반복
     {
         if((*lit)->mnRelocWords>maxCommonWords) // keyframe->mnRelocWords : 해당 keyframe과 현재 frame이 공유하는 relocalization words의 개수
             maxCommonWords=(*lit)->mnRelocWords; // keyframe->mnRelocWords -> maxCommonWords : 각 keyframe과 현재 frame이 공유하는 가장 많은 relocalization words 개수
@@ -248,7 +252,7 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
     // lKFsSharingWords list -> 특정한 word를 공유하는 keyframe
     for(list<KeyFrame*>::iterator lit=lKFsSharingWords.begin(), lend= lKFsSharingWords.end(); lit!=lend; lit++)
     {
-        KeyFrame* pKFi = *lit;
+        KeyFrame* pKFi = *lit; // 특정한 word를 공유하는 keyframe
 
         if(pKFi->mnRelocWords>minCommonWords) // 해당 keyframe과 현재 frame이 공유하는 relocalization words의 개수가 일정 threshold(maxCommonWords*0.8)를 넘으면,
         {
@@ -265,11 +269,12 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
     list<pair<float,KeyFrame*> > lAccScoreAndMatch;
     float bestAccScore = 0;
 
+    // Q. covisibility graph 상의 neighbors이면서 relocalization candidate keyframe과의 관계를 고려
     // Lets now accumulate score by covisibility
-    for(list<pair<float,KeyFrame*> >::iterator it=lScoreAndMatch.begin(), itend=lScoreAndMatch.end(); it!=itend; it++)
+    for(list<pair<float,KeyFrame*> >::iterator it=lScoreAndMatch.begin(), itend=lScoreAndMatch.end(); it!=itend; it++) // keyframe + 해당 keyframe의 similarity score의 개수만큼 반복
     {
         KeyFrame* pKFi = it->second; // it->second : keyframe
-        vector<KeyFrame*> vpNeighs = pKFi->GetBestCovisibilityKeyFrames(10); // 해당 keyframe의 covisibility graph 상에서의 N개의 neighbors 추출
+        vector<KeyFrame*> vpNeighs = pKFi->GetBestCovisibilityKeyFrames(10); // 해당 keyframe의 covisibility graph 상에서의 10개의 neighbors(weight가 높은 순서대로) 추출
 
         float bestScore = it->first; // it->first : 해당 keyframe의 similarity score
         float accScore = bestScore;
@@ -277,10 +282,10 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
         for(vector<KeyFrame*>::iterator vit=vpNeighs.begin(), vend=vpNeighs.end(); vit!=vend; vit++) // 해당 keyframe의 covisibility graph 상에서 N개의 neighbors만큼 반복
         {
             KeyFrame* pKF2 = *vit; // neighbors keyframe
-            if(pKF2->mnRelocQuery!=F->mnId) // Q.
+            if(pKF2->mnRelocQuery!=F->mnId) // Q. 해당 keyframe의 neighbors 중에 relocalization candidate keyframe이 아니라면,
                 continue; // 해당 for문을 빠져나가라.
 
-            accScore+=pKF2->mRelocScore; // neighbors keyframe의 mRelocScore까지 고려
+            accScore+=pKF2->mRelocScore; // neighbors keyframe의 mRelocScore(위의 코드에서 수행)까지 고려
             // 현재 frame과 word를 공유하는 keyframe의 neighbors 중, 가장 많은 word를 공유하는 keyframe을 찾는다.
             if(pKF2->mRelocScore>bestScore)
             {
@@ -289,9 +294,10 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
             }
 
         }
-        lAccScoreAndMatch.push_back(make_pair(accScore,pBestKF)); // 현재 frame과 word를 공유하는 keyframe의 neighbors 중, 가장 많은 word를 공유하는 keyframe
+        lAccScoreAndMatch.push_back(make_pair(accScore,pBestKF)); // 현재 keyframe(relocalization candidates)과 word를 공유하는 keyframe의 neighbors 중, 가장 많은 word를 공유하는 keyframe
+        // Q. 같은 keyframe이 중복될 수 있다.
         if(accScore>bestAccScore)
-            bestAccScore=accScore;
+            bestAccScore=accScore; // 모든 keyframe(relocalization candidates)를 포함한 그의 neighbors 중 가장 많은 word를 공유하는 keyframe의 similarity score
     }
 
     // Return all those keyframes with a score higher than 0.75*bestScore

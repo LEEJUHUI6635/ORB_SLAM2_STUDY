@@ -234,7 +234,7 @@ void MapPoint::IncreaseVisible(int n)
 
 void MapPoint::IncreaseFound(int n)
 {
-    unique_lock<mutex> lock(mMutexFeatures);
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mMutexFeatures를 소유한다.
     mnFound+=n;
 }
 

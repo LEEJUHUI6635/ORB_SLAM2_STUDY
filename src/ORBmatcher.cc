@@ -1413,7 +1413,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
 
                 vector<size_t> vIndices2;
 
-                // GetFeaturesInArea : projected map point와 일치할 확률에 가까운 keypoint의 index를 구한다. 
+                // GetFeaturesInArea -> Grid Search를 통해 projected map point와 유사한 keypoint의 index를 구한다.
                 if(bForward) // 전진하는 경우
                     vIndices2 = CurrentFrame.GetFeaturesInArea(u,v, radius, nLastOctave); // minLevel = nLastOctave -> 전진하는 경우, 특정 feature에 더 가까워지기 때문
                 else if(bBackward) // 후진하는 경우
@@ -1428,10 +1428,11 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
 
                 int bestDist = 256; // 가장 큰 descriptor distance
                 int bestIdx2 = -1;
-
+                
+                // Grid Search를 통해 구한, projected map point와 유사한 keypoint의 개수만큼 반복
                 for(vector<size_t>::const_iterator vit=vIndices2.begin(), vend=vIndices2.end(); vit!=vend; vit++)
                 {
-                    const size_t i2 = *vit; // 반복자 pointer de-reference
+                    const size_t i2 = *vit; // 반복자 pointer de-reference, i2 -> keypoint의 index
                     if(CurrentFrame.mvpMapPoints[i2]) // 해당 keypoint를 갖는 현재 frame의 map point가 존재한다면,
                         if(CurrentFrame.mvpMapPoints[i2]->Observations()>0) // 해당 map point와 일치하는 keyframe의 keypoint가 존재한다면,
                             continue; // 해당 for문을 빠져나가라.
@@ -1463,6 +1464,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
 
                     if(mbCheckOrientation) // mbCheckOrientation = true
                     {
+                        // Q. rot의 의미?
                         float rot = LastFrame.mvKeysUn[i].angle-CurrentFrame.mvKeysUn[bestIdx2].angle; // 지난 frame 상의 keypoint의 angle - 현재 frame 상의 keypoint의 angle
                         if(rot<0.0) // 현재 frame 상의 keypoint의 angle > 지난 frame 상의 keypoint의 angle
                             rot+=360.0f;
@@ -1483,7 +1485,8 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
         int ind1=-1;
         int ind2=-1;
         int ind3=-1;
-
+        
+        // Q. 빈도수가 높은 것이 아니라, rot이 가장 작은 경우만을 고려해야 하는 것이 아닌가?
         ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3); // rotHist histogram에서 첫 번째로 빈도수가 높은 word의 index, 두 번째로 빈도수가 높은 word의 index,
         // 세 번째로 빈도수가 높은 word의 index를 추출한다.
 
@@ -1509,9 +1512,9 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set
 {
     int nmatches = 0;
 
-    const cv::Mat Rcw = CurrentFrame.mTcw.rowRange(0,3).colRange(0,3); // 현재 frame의 world to camera coordinate pose의 rotation 
+    const cv::Mat Rcw = CurrentFrame.mTcw.rowRange(0,3).colRange(0,3); // 현재 frame의 world to camera coordinate pose의 rotation
     const cv::Mat tcw = CurrentFrame.mTcw.rowRange(0,3).col(3); // 현재 frame의 world to camera coordinate pose의 translation
-    const cv::Mat Ow = -Rcw.t()*tcw; // 현재 frame의 camera to world coordinate pose의 translation -> world 좌표계 상의 camera position 
+    const cv::Mat Ow = -Rcw.t()*tcw; // 현재 frame의 camera to world coordinate pose의 translation -> world 좌표계 상의 camera position
 
     // Rotation Histogram (to check rotation consistency)
     vector<int> rotHist[HISTO_LENGTH]; // rotHist[30] -> rotation histogram
@@ -1528,7 +1531,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set
         if(pMP) // 해당 map point가 존재한다면,
         {
             if(!pMP->isBad() && !sAlreadyFound.count(pMP))
-            // pMP->isBad() = false and sAlreadyFound.count(pMP) = false -> 해당 map point가 나쁘지 않다고 판단되고 적절한 correspondence가 발견되지 map point라면,
+            // pMP->isBad() = false and sAlreadyFound.count(pMP) = false -> 해당 map point가 나쁘지 않다고 판단되고, 해당 map point가 이미 찾아지지 않았다면(중복 방지),
             {
                 //Project
                 cv::Mat x3Dw = pMP->GetWorldPos(); // 절대 좌표계인 world 좌표계 상의 map point의 position
@@ -1543,9 +1546,9 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set
                 
                 // image boundary를 벗어나는 map point 고려 x
                 if(u<CurrentFrame.mnMinX || u>CurrentFrame.mnMaxX)
-                    continue; // 해당 for문을 빠져나가라.
+                    continue; // 해당 루프의 끝으로 이동한다.
                 if(v<CurrentFrame.mnMinY || v>CurrentFrame.mnMaxY)
-                    continue; // 해당 for문을 빠져나가라.
+                    continue; // 해당 루프의 끝으로 이동한다.
 
                 // Compute predicted scale level
                 cv::Mat PO = x3Dw-Ow; // image optical center - map point
@@ -1558,11 +1561,12 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set
                 // Depth must be inside the scale pyramid of the image
                 // normalized distance가 scale invariance distances를 벗어나는 map point 고려 x
                 if(dist3D<minDistance || dist3D>maxDistance)
-                    continue; // 해당 for문을 빠져나가라.
+                    continue; // 해당 루프의 끝으로 이동한다.
 
                 int nPredictedLevel = pMP->PredictScale(dist3D,&CurrentFrame); // 해당 map point의 predicted scale
 
                 // Search in a window
+                // radius -> window size
                 const float radius = th*CurrentFrame.mvScaleFactors[nPredictedLevel]; // th * 해당 map point의 predicted scale의 scale factor = radius
 
                 // (비슷한 scale 범위에서) reprojected map point에 해당하는 feature를 찾기 위해 grid를 통해 빠르게 search하는 함수
@@ -1570,19 +1574,19 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set
                 const vector<size_t> vIndices2 = CurrentFrame.GetFeaturesInArea(u, v, radius, nPredictedLevel-1, nPredictedLevel+1);
 
                 if(vIndices2.empty()) // grid search를 통해 찾은 keypoint가 없다면,
-                    continue; // 해당 for문을 빠져나가라.
+                    continue; // 해당 루프의 끝으로 이동한다.
 
                 const cv::Mat dMP = pMP->GetDescriptor(); // 해당 map point가 관측되는 keyframe의 keypoint descriptor
 
                 int bestDist = 256; // descriptor의 최대 distance
                 int bestIdx2 = -1;
 
-                // grid search를 통해 찾은, map point
+                // Grid Search를 통해 찾은, i번째 relocalization candidate keyframe의 map points와 유사한 현재 frame의 keypoints index
                 for(vector<size_t>::const_iterator vit=vIndices2.begin(); vit!=vIndices2.end(); vit++)
                 {
                     const size_t i2 = *vit; // de-reference -> keypoint의 index
                     if(CurrentFrame.mvpMapPoints[i2]) // 해당 (frame 상의 keypoint에 해당하는)map point가 존재하면,
-                        continue; // 해당 for문을 빠져나가라.
+                        continue; // 해당 루프의 끝으로 이동한다.
 
                     const cv::Mat &d = CurrentFrame.mDescriptors.row(i2); // 현재 frame의 i2번째 descriptor
 
@@ -1604,6 +1608,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set
 
                     if(mbCheckOrientation) // mbCheckOrientation = true
                     {
+                        // Q. rot 값이 작을수록 correspondence의 확률이 더 커지는 것이 아닌가?
                         float rot = pKF->mvKeysUn[i].angle-CurrentFrame.mvKeysUn[bestIdx2].angle; // keyframe 상의 i번째 keypoint의 angle - 현재 frame 상의 i번째 keypoint의 angle
                         if(rot<0.0)
                             rot+=360.0f;

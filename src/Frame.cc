@@ -332,35 +332,37 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
     vector<size_t> vIndices;
     vIndices.reserve(N); // frame의 keypoint 개수
 
-    // Cell의 boundaries 계산 -> Cell의 크기 < grid의 크기
+    // Cell의 boundaries 계산 -> grid map 상의 search 범위
+    // grid size = 10 x 10
+    // 0 <= nMinCellX < 64, 0 <= nMinCellY < 48
     const int nMinCellX = max(0,(int)floor((x-mnMinX-r)*mfGridElementWidthInv)); // max(0, (x-r)/10)
     if(nMinCellX>=FRAME_GRID_COLS) // 64
-        return vIndices; // vIndices = 0
+        return vIndices; // vIndices.empty() = true
 
     const int nMaxCellX = min((int)FRAME_GRID_COLS-1,(int)ceil((x-mnMinX+r)*mfGridElementWidthInv)); // min(63, (x-r)/10)
     if(nMaxCellX<0)
-        return vIndices; // vIndices = 0
+        return vIndices; // vIndices.empty() = true
 
     const int nMinCellY = max(0,(int)floor((y-mnMinY-r)*mfGridElementHeightInv)); // max(0, (y-r)/10)
     if(nMinCellY>=FRAME_GRID_ROWS) // 48
-        return vIndices; // vIndices = 0
+        return vIndices; // vIndices.empty() = true
 
     const int nMaxCellY = min((int)FRAME_GRID_ROWS-1,(int)ceil((y-mnMinY+r)*mfGridElementHeightInv)); // min(47, (y-r)/10)
     if(nMaxCellY<0)
-        return vIndices; // vIndices = 0
+        return vIndices; // vIndices.empty() = true
 
     const bool bCheckLevels = (minLevel>0) || (maxLevel>=0); // minLevel > 0 or maxLevel >= 0 -> bCheckLevels = true
 
-    // Cell의 boundary 내에서
+    // Cell의 boundary 내에서 
     for(int ix = nMinCellX; ix<=nMaxCellX; ix++)
     {
         for(int iy = nMinCellY; iy<=nMaxCellY; iy++)
         {
-            const vector<size_t> vCell = mGrid[ix][iy]; // mGrid[ix][iy] -> 해당 grid에 존재하는 keypoint의 index
+            const vector<size_t> vCell = mGrid[ix][iy]; // mGrid[ix][iy] -> 전체 grid map에서의 특정 grid에 속한 keypoint들의 index
             if(vCell.empty())
                 continue; // 해당 for문을 빠져나가라.
 
-            for(size_t j=0, jend=vCell.size(); j<jend; j++) // 해당 grid에 존재하는 keypoint의 개수
+            for(size_t j=0, jend=vCell.size(); j<jend; j++) // 해당 grid에 존재하는 keypoint의 개수만큼 반복
             {
                 const cv::KeyPoint &kpUn = mvKeysUn[vCell[j]]; // 해당 index에 존재하는 keypoint
                 if(bCheckLevels) // minLevel > 0 or maxLevel >= 0 -> bCheckLevels = true
