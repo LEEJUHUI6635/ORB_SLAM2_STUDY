@@ -285,6 +285,7 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
             if(pKF2->mnRelocQuery!=F->mnId) // Q. 해당 keyframe의 neighbors 중에 relocalization candidate keyframe이 아니라면,
                 continue; // 해당 for문을 빠져나가라.
 
+            // Q. pKF2->mnRelocWords <= minCommonWords?
             accScore+=pKF2->mRelocScore; // neighbors keyframe의 mRelocScore(위의 코드에서 수행)까지 고려
             // 현재 frame과 word를 공유하는 keyframe의 neighbors 중, 가장 많은 word를 공유하는 keyframe을 찾는다.
             if(pKF2->mRelocScore>bestScore)

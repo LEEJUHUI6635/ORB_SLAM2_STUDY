@@ -85,8 +85,9 @@ cv::Mat MapPoint::GetWorldPos()
 
 cv::Mat MapPoint::GetNormal()
 {
-    unique_lock<mutex> lock(mMutexPos);
-    return mNormalVector.clone();
+    unique_lock<mutex> lock(mMutexPos); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexPos를 소유한다.
+    return mNormalVector.clone(); // mean viewing direction
+    // clone() : 깊은 복사 -> 새로운 메모리 주소를 할당 받아, 값을 복사한다.
 }
 
 KeyFrame* MapPoint::GetReferenceKeyFrame()
@@ -143,8 +144,8 @@ void MapPoint::EraseObservation(KeyFrame* pKF)
 
 map<KeyFrame*, size_t> MapPoint::GetObservations()
 {
-    unique_lock<mutex> lock(mMutexFeatures);
-    return mObservations;
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
+    return mObservations; // key : keyframe, value : keypoint index
 }
 
 int MapPoint::Observations()
@@ -226,15 +227,15 @@ bool MapPoint::isBad()
     return mbBad; // map point culling 관련 flag
 }
 
-void MapPoint::IncreaseVisible(int n)
+void MapPoint::IncreaseVisible(int n) // default -> n = 1
 {
-    unique_lock<mutex> lock(mMutexFeatures);
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
     mnVisible+=n;
 }
 
-void MapPoint::IncreaseFound(int n)
+void MapPoint::IncreaseFound(int n) // default -> n = 1
 {
-    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mMutexFeatures를 소유한다.
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
     mnFound+=n;
 }
 

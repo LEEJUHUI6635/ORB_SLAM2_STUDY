@@ -266,58 +266,63 @@ void Frame::UpdatePoseMatrices()
     mOw = -mRcw.t()*mtcw; // camera to world coordinate의 translation
 }
 
+// 해당 map point가 frustum 안에 존재하는지에 대한 여부를 결정하는 함수
 bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
 {
-    pMP->mbTrackInView = false;
+    pMP->mbTrackInView = false; // Q. 
 
     // 3D in absolute coordinates
-    cv::Mat P = pMP->GetWorldPos(); 
+    cv::Mat P = pMP->GetWorldPos(); // 절대 좌표계인 world 좌표계 상의 map point의 position
 
     // 3D in camera coordinates
-    const cv::Mat Pc = mRcw*P+mtcw;
-    const float &PcX = Pc.at<float>(0);
-    const float &PcY= Pc.at<float>(1);
-    const float &PcZ = Pc.at<float>(2);
+    const cv::Mat Pc = mRcw*P+mtcw; // world to camera coordinate의 pose x world 좌표계 상의 map point = camera 좌표계 상의 map point
+    const float &PcX = Pc.at<float>(0); // camera 좌표계 상의 X
+    const float &PcY= Pc.at<float>(1); // camera 좌표계 상의 Y
+    const float &PcZ = Pc.at<float>(2); // camera 좌표계 상의 Z
 
     // Check positive depth
-    if(PcZ<0.0f)
-        return false;
+    if(PcZ<0.0f) // camera 좌표계 상의 Z < 0
+        return false; // 해당 map point는 frustum 안에 존재하지 않을 것이기 때문
 
     // Project in image and check it is not outside
     const float invz = 1.0f/PcZ;
-    const float u=fx*PcX*invz+cx;
-    const float v=fy*PcY*invz+cy;
+    const float u=fx*PcX*invz+cx; // PcX*invz = normalized plane 상의 X 좌표 -> pixel 좌표계 상의 X 좌표
+    const float v=fy*PcY*invz+cy; // PcY*invz = normalized plane 상의 Y 좌표 -> pixel 좌표계 상의 Y 좌표
 
+    // image boundary를 벗어나면, 해당 map point는 frustum 안에 존재하지 않을 것이기 때문
     if(u<mnMinX || u>mnMaxX)
         return false;
     if(v<mnMinY || v>mnMaxY)
         return false;
 
     // Check distance is in the scale invariance region of the MapPoint
-    const float maxDistance = pMP->GetMaxDistanceInvariance();
-    const float minDistance = pMP->GetMinDistanceInvariance();
-    const cv::Mat PO = P-mOw;
-    const float dist = cv::norm(PO);
-
+    const float maxDistance = pMP->GetMaxDistanceInvariance(); // 1.2f*mfMaxDistance
+    const float minDistance = pMP->GetMinDistanceInvariance(); // 0.8f*mfMinDistance
+    const cv::Mat PO = P-mOw; // world 좌표계 상의 map point position - world 좌표계 상의 camera position
+    const float dist = cv::norm(PO); // L1-norm -> P0의 크기
+    
+    // camera의 optical center에서 map point까지의 거리가 scale invariance region에 속하지 않는다면 frustum 안에 존재하지 않을 것이기 때문
     if(dist<minDistance || dist>maxDistance)
         return false;
 
    // Check viewing angle
-    cv::Mat Pn = pMP->GetNormal();
+    cv::Mat Pn = pMP->GetNormal(); // map point의 mean viewing vector
 
-    const float viewCos = PO.dot(Pn)/dist;
+    const float viewCos = PO.dot(Pn)/dist; // P0.dot(Pn) -> inner product 
+    // camera의 optical center에서 map point까지를 잇는 벡터와 map point의 mean viewing vector의 내적
 
-    if(viewCos<viewingCosLimit)
-        return false;
+    if(viewCos<viewingCosLimit) // cos60 = 0.5
+    // camera의 optical center에서 map point까지를 잇는 벡터와 map point의 mean viewing vector가 이루는 각도가 60도를 넘어가면,
+        return false; // 해당 map point는 frustum 안에 존재하지 않을 것이기 때문
 
     // Predict scale in the image
-    const int nPredictedLevel = pMP->PredictScale(dist,this);
+    const int nPredictedLevel = pMP->PredictScale(dist,this); // 현재 frame에 대한 map point의 scale level 계산
 
     // Data used by the tracking
-    pMP->mbTrackInView = true;
-    pMP->mTrackProjX = u;
-    pMP->mTrackProjXR = u - mbf*invz;
-    pMP->mTrackProjY = v;
+    pMP->mbTrackInView = true; // Q. 
+    pMP->mTrackProjX = u; // left image에서의 X 좌표
+    pMP->mTrackProjXR = u - mbf*invz; // right image에서의 X 좌표
+    pMP->mTrackProjY = v; // left image에서의 Y 좌표 = right image에서의 Y 좌표 -> rectified image이기 때문
     pMP->mnTrackScaleLevel= nPredictedLevel;
     pMP->mTrackViewCos = viewCos;
 

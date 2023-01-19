@@ -181,7 +181,6 @@ vector<KeyFrame*> KeyFrame::GetBestCovisibilityKeyFrames(const int &N)
     else // covisibility graph 상에서 연결되어 있는 keyframe들을 weight 순으로 ordering한 list의 size >= N
         return vector<KeyFrame*>(mvpOrderedConnectedKeyFrames.begin(),mvpOrderedConnectedKeyFrames.begin()+N);
         // covisibility graph 상에서 연결되어 있는 keyframe들을 weight 순으로 N개 추출
-
 }
 
 vector<KeyFrame*> KeyFrame::GetCovisiblesByWeight(const int &w)
@@ -402,7 +401,7 @@ void KeyFrame::ChangeParent(KeyFrame *pKF)
 
 set<KeyFrame*> KeyFrame::GetChilds()
 {
-    unique_lock<mutex> lockCon(mMutexConnections);
+    unique_lock<mutex> lockCon(mMutexConnections); // unique_lock class의 객체인 lockCon은 mutex 객체인 mMutexConnections를 소유한다.
     return mspChildrens;
 }
 

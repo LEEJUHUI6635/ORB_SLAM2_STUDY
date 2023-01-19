@@ -42,64 +42,69 @@ ORBmatcher::ORBmatcher(float nnratio, bool checkOri): mfNNratio(nnratio), mbChec
 {
 }
 
+// matcher.SearchByProjection(mCurrentFrame,mvpLocalMapPoints,th)
+// input : F, vpMapPoints, th, output : nmatches
 int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoints, const float th)
 {
     int nmatches=0;
 
-    const bool bFactor = th!=1.0;
+    const bool bFactor = th!=1.0; // th != 1.0 -> bFactor = true, th = 1.0 -> bFactor = false
 
-    for(size_t iMP=0; iMP<vpMapPoints.size(); iMP++)
+    for(size_t iMP=0; iMP<vpMapPoints.size(); iMP++) // local map point의 개수만큼 반복
     {
-        MapPoint* pMP = vpMapPoints[iMP];
-        if(!pMP->mbTrackInView)
-            continue;
+        MapPoint* pMP = vpMapPoints[iMP]; // iMP번째 local map point -> pMP
+        if(!pMP->mbTrackInView) // pMP->mbTrackInView = false -> Q.
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        if(pMP->isBad())
-            continue;
+        if(pMP->isBad()) // 해당 map point가 나쁘다고 판단되면,
+            continue; // 해당 루프의 끝으로 이동한다.
 
         const int &nPredictedLevel = pMP->mnTrackScaleLevel;
 
         // The size of the window will depend on the viewing direction
+        // image optical center와 map point를 잇는 벡터와 map point의 mean viewing vector가 이루는 각도에 따라 search window의 size가 결정된다.
         float r = RadiusByViewingCos(pMP->mTrackViewCos);
 
-        if(bFactor)
+        if(bFactor) // bFactor = true -> th != 1.0
             r*=th;
 
+        // Grid Search -> local map point를 현재 frame에 projection하여, grid search를 통해 찾은 특정 grid 내의 keypoint들의 index
         const vector<size_t> vIndices =
                 F.GetFeaturesInArea(pMP->mTrackProjX,pMP->mTrackProjY,r*F.mvScaleFactors[nPredictedLevel],nPredictedLevel-1,nPredictedLevel);
 
-        if(vIndices.empty())
-            continue;
+        if(vIndices.empty()) // vIndices.empty() = true
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        const cv::Mat MPdescriptor = pMP->GetDescriptor();
+        const cv::Mat MPdescriptor = pMP->GetDescriptor(); // 해당 map point가 관측되는 keyframe의 keypoint descriptor
 
-        int bestDist=256;
+        int bestDist=256; // descriptor distance의 최대값
         int bestLevel= -1;
-        int bestDist2=256;
+        int bestDist2=256; // descriptor distance의 최대값
         int bestLevel2 = -1;
         int bestIdx =-1 ;
 
         // Get best and second matches with near keypoints
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
         {
-            const size_t idx = *vit;
+            const size_t idx = *vit; // de-reference -> keypoint의 index
 
-            if(F.mvpMapPoints[idx])
-                if(F.mvpMapPoints[idx]->Observations()>0)
-                    continue;
+            if(F.mvpMapPoints[idx]) // grid search를 통해 찾은 keypoint의 index에 해당하는 현재 frame의 map point가 존재한다면,
+                if(F.mvpMapPoints[idx]->Observations()>0) // 해당 map point를 관측하는 keyframe이 하나 이상 발견된다면,
+                    continue; // 해당 루프의 끝으로 이동한다.
 
-            if(F.mvuRight[idx]>0)
+            if(F.mvuRight[idx]>0) // Q. RGB-D?
             {
                 const float er = fabs(pMP->mTrackProjXR-F.mvuRight[idx]);
                 if(er>r*F.mvScaleFactors[nPredictedLevel])
                     continue;
             }
 
-            const cv::Mat &d = F.mDescriptors.row(idx);
+            const cv::Mat &d = F.mDescriptors.row(idx); // grid search를 통해 찾은 keypoint의 index에 해당하는 현재 frame의 descriptor
 
             const int dist = DescriptorDistance(MPdescriptor,d);
+            // local map point의 descriptor와 grid search를 통해 찾은 keypoint의 index에 해당하는 현재 frame의 descriptor 간의 거리
 
-            if(dist<bestDist)
+            if(dist<bestDist) // bestDist -> 두 descriptor 간의 가장 작은 distance
             {
                 bestDist2=bestDist;
                 bestDist=dist;
@@ -107,7 +112,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
                 bestLevel = F.mvKeysUn[idx].octave;
                 bestIdx=idx;
             }
-            else if(dist<bestDist2)
+            else if(dist<bestDist2) // bestDist2 -> 두 descriptor 간의 두 번째로 작은 distance
             {
                 bestLevel2 = F.mvKeysUn[idx].octave;
                 bestDist2=dist;
@@ -115,12 +120,14 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
         }
 
         // Apply ratio to second match (only if best and second are in the same scale level)
-        if(bestDist<=TH_HIGH)
+        if(bestDist<=TH_HIGH) // TH_HIGH = 100
         {
+            // Q. bestLevel == bestLevel2 -> 두 후보가 거의 비슷하다.
+            // bestDist > mfNNratio * bestDist2 -> 두 후보가 꽤 큰 차이를 보이지 않으면 search를 중단한다.
             if(bestLevel==bestLevel2 && bestDist>mfNNratio*bestDist2)
-                continue;
+                continue; // 해당 루프의 끝으로 이동한다.
 
-            F.mvpMapPoints[bestIdx]=pMP;
+            F.mvpMapPoints[bestIdx]=pMP; // local map points -> 현재 frame의 mvpMapPoints vector
             nmatches++;
         }
     }
@@ -130,10 +137,10 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
 
 float ORBmatcher::RadiusByViewingCos(const float &viewCos)
 {
-    if(viewCos>0.998)
+    if(viewCos>0.998) // image optical center와 map point를 잇는 벡터와 map point의 mean viewing vector와의 각도가 크지 않으면,
         return 2.5;
-    else
-        return 4.0;
+    else // viewCos <= 0.998 -> image optical center와 map point를 잇는 벡터와 map point의 mean viewing vector와의 각도가 크다면,
+        return 4.0; // search window의 size를 키운다.
 }
 
 

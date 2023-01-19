@@ -222,7 +222,8 @@ void MapDrawer::DrawCurrentCamera(pangolin::OpenGlMatrix &Twc)
 void MapDrawer::SetCurrentCameraPose(const cv::Mat &Tcw)
 {
     unique_lock<mutex> lock(mMutexCamera); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexCamera를 소유한다.
-    mCameraPose = Tcw.clone(); // 현재 camera pose -> camera to world coordinate
+    mCameraPose = Tcw.clone(); // world to camera coordinate의 pose
+    // clone() : 깊은 복사 -> 새로운 메모리 주소를 할당 받아, 값을 복사한다.
 }
 
 void MapDrawer::GetCurrentOpenGLCameraMatrix(pangolin::OpenGlMatrix &M)

@@ -186,7 +186,7 @@ void FrameDrawer::Update(Tracking *pTracker) // Tracking class 자신
     {
         for(int i=0;i<N;i++) // keypoint의 개수만큼 반복
         {
-            MapPoint* pMP = pTracker->mCurrentFrame.mvpMapPoints[i]; // tracking thread의 keyframe이 가지는 keypoint에 해당하는 map point
+            MapPoint* pMP = pTracker->mCurrentFrame.mvpMapPoints[i]; // tracking thread의 현재 frame이 가지는 keypoint에 해당하는 map point
             // pMP -> keypoint에 대응되는 하나의 map point
             if(pMP) // pMP가 할당되어 있다면,
             {
@@ -194,14 +194,14 @@ void FrameDrawer::Update(Tracking *pTracker) // Tracking class 자신
                 {
                     // for just Viewer
                     if(pMP->Observations()>0) // MapPoint::nObs > 0 -> map point와 association 관계가 있는 keypoint가 있다면,
-                        mvbMap[i]=true; // Q. map point를 형성하는데 쓰이는 keypoint
+                        mvbMap[i]=true; // map point를 형성하는데 쓰이는 keypoint
                     else // MapPoint::nObs = 0 -> map point와 association 관계가 있는 keypoint가 없다면,
-                        mvbVO[i]=true; // Q. Visual Odometry에 쓰이는 keypoint
+                        mvbVO[i]=true; // Visual Odometry에 쓰이는 keypoint
                 }
             }
         }
     }
-    mState=static_cast<int>(pTracker->mLastProcessedState); // mState = 2 -> Q. 굳이 static_cast<int>로 형변환?
+    mState=static_cast<int>(pTracker->mLastProcessedState); // mState = 2
 }
 
 } //namespace ORB_SLAM

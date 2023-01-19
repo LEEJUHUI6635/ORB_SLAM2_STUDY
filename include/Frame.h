@@ -71,12 +71,14 @@ public:
 
     // Returns the camera center.
     inline cv::Mat GetCameraCenter(){
-        return mOw.clone();
+        return mOw.clone(); // camera to world coordinate의 translation
+        // clone() : 깊은 복사 -> 새로운 메모리 주소를 할당 받아, 값을 복사한다.
     }
 
     // Returns inverse of rotation
     inline cv::Mat GetRotationInverse(){
-        return mRwc.clone();
+        return mRwc.clone(); // camera to world coordinate의 rotation
+        // clone() : 깊은 복사 -> 새로운 메모리 주소를 할당 받아, 값을 복사한다.
     }
 
     // Check if a MapPoint is in the frustum of the camera
