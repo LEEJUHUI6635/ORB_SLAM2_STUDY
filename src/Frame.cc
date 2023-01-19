@@ -258,7 +258,7 @@ void Frame::SetPose(cv::Mat Tcw) // input : world to camera coordinate, output :
     UpdatePoseMatrices(); // world to camera coordinate -> camera to world coordinate
 }
 
-void Frame::UpdatePoseMatrices()
+void Frame::UpdatePoseMatrices() // world to camera coordinate의 pose -> camera to world coordinate의 pose
 {   // return Mat(*this, Range(startrow, endrow), Range::all()); -> 같은 class에 속한 함수가 return을 자기 자신의 class로 받기 때문에 중복하여 .을 찍고 함수의 호출이 가능하다.
     mRcw = mTcw.rowRange(0,3).colRange(0,3); // rowRange(), colRange() -> 관심 영역, rotation matrix
     mRwc = mRcw.t(); // transpose -> camera to world coordinate의 rotation matrix

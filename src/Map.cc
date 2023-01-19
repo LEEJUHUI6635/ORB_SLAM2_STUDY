@@ -104,8 +104,8 @@ long unsigned int Map::MapPointsInMap()
 
 long unsigned int Map::KeyFramesInMap()
 {
-    unique_lock<mutex> lock(mMutexMap);
-    return mspKeyFrames.size();
+    unique_lock<mutex> lock(mMutexMap); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexMap을 소유한다.
+    return mspKeyFrames.size(); // map에 포함되는 keyframe의 개수
 }
 
 vector<MapPoint*> Map::GetReferenceMapPoints()

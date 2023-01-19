@@ -68,8 +68,8 @@ public:
     bool isFinished();
 
     int KeyframesInQueue(){
-        unique_lock<std::mutex> lock(mMutexNewKFs);
-        return mlNewKeyFrames.size();
+        unique_lock<std::mutex> lock(mMutexNewKFs); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexNewKFs를 소유한다.
+        return mlNewKeyFrames.size(); // local mapping thread의 처리 대상인 새로운 keyframe의 개수
     }
 
 protected:

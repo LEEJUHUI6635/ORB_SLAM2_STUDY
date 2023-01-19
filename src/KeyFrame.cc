@@ -92,8 +92,9 @@ cv::Mat KeyFrame::GetPose()
 
 cv::Mat KeyFrame::GetPoseInverse()
 {
-    unique_lock<mutex> lock(mMutexPose);
-    return Twc.clone();
+    unique_lock<mutex> lock(mMutexPose); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexPose를 소유한다.
+    return Twc.clone(); // camera to world coordinate의 pose
+    // clone() : 깊은 복사 -> 새로운 메모리 주소를 할당 받아 값을 복사한다.
 }
 
 cv::Mat KeyFrame::GetCameraCenter()
@@ -249,26 +250,28 @@ set<MapPoint*> KeyFrame::GetMapPoints()
     return s;
 }
 
+// input : minObs, output : nPoints -> minObs 이상의 keyframe에서 관측되는 현재 keyframe의 map points
 int KeyFrame::TrackedMapPoints(const int &minObs)
 {
-    unique_lock<mutex> lock(mMutexFeatures);
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
 
     int nPoints=0;
-    const bool bCheckObs = minObs>0;
-    for(int i=0; i<N; i++)
+    const bool bCheckObs = minObs>0; // minObs > 0 -> bCheckObs = true, minObs <= 0 -> bCheckObs = false
+    for(int i=0; i<N; i++) // keyframe의 keypoint 개수만큼 반복
     {
-        MapPoint* pMP = mvpMapPoints[i];
-        if(pMP)
+        MapPoint* pMP = mvpMapPoints[i]; // keyframe의 i번째 keypoint와 association 관계가 있는 map point
+        if(pMP) // pMP가 존재한다면,
+        // pMP가 Null 값이라면 false를 return 할 것이다.
         {
-            if(!pMP->isBad())
+            if(!pMP->isBad()) // pMP->isBad() = false, 해당 map point가 나쁘지 않다고 판단되면,
             {
-                if(bCheckObs)
+                if(bCheckObs) // bCheckObs = true -> minObs > 0
                 {
-                    if(mvpMapPoints[i]->Observations()>=minObs)
-                        nPoints++;
+                    if(mvpMapPoints[i]->Observations()>=minObs) // 해당 keyframe의 map points가 최소한의 keyframe에서 발견된다면,
+                        nPoints++; // nPoints : minObs 이상의 keyframe에서 관측되는 현재 keyframe의 map points
                 }
-                else
-                    nPoints++;
+                else // bCheckObs = false -> minObs <= 0
+                    nPoints++; // mvpMapPoints[i]->Observations()>=minObs 조건을 항상 만족하기 때문
             }
         }
     }

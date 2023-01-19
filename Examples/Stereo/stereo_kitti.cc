@@ -46,6 +46,7 @@ int main(int argc, char **argv) // terminal에서 main 함수를 시작하기 �
 {   // main 함수에 전달되는 데이터의 갯수가 4개가 아닌 경우
     if(argc != 4) // char **argv = ./stereo_kitti path_to_vocabulary path_to_settings path_to_sequence
     {
+        // cerr = cout error
         cerr << endl << "Usage: ./stereo_kitti path_to_vocabulary path_to_settings path_to_sequence" << endl;
         return 1; // 1 이상의 숫자 : 정상 종료 되었으나, 다른 무엇인가 있음을 나타낸다.
     }
@@ -167,8 +168,9 @@ void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
     string strPathTimeFile = strPathToSequence + "/times.txt"; // /dataset/sequences/00/times.txt
     fTimes.open(strPathTimeFile.c_str()); // Q. C string 형식으로 변환한다. String class에서 담고 있는 문자열을 C에서의
     // const char* 타입으로 변환하여 반환해주는 편리한 멤버 함수이다. -> char 형의 pointer로 변환
-    // ifstream class의 객체인 fTimes의 멤버 함수인 open()은 const char*의 형식으로 input을 받는다.
+    // A. ifstream class의 객체인 fTimes의 멤버 함수인 open()은 const char*의 형식으로 input을 받는다.
 
+    // 파일의 끝에 도달할 때까지 계속 반복
     while(!fTimes.eof()) // eof() = End of File, 파일의 끝에 도달하면 eof가 반환된다.
     {
         string s; // 비어있는 문자열 s 선언
@@ -176,7 +178,7 @@ void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
         // 파일을 한 줄씩 읽어, 기본 구분 기호 문자인 \n이 나타날 때까지 s에 저장한다.
         getline(fTimes,s);
 
-        if(!s.empty()) // 문자열 s가 비어있지 않다면, 
+        if(!s.empty()) // 문자열 s가 비어있지 않다면,
         {
             // stringstream : 문자열에서 내가 원하는 자료형의 데이터를 추출할 때 사용한다.
             stringstream ss;
@@ -196,7 +198,7 @@ void LoadImages(const string &strPathToSequence, vector<string> &vstrImageLeft,
     vstrImageLeft.resize(nTimes); // vector vstrImageLeft의 크기를 nTimes로 resize -> 동적 할당 배열이기 때문에 메모리 절약을 위해,
     vstrImageRight.resize(nTimes); // vector vstrImageRight의 크기를 nTimes로 resize -> 동적 할당 배열이기 때문에 메모리 절약을 위해,
 
-    for(int i=0; i<nTimes; i++)
+    for(int i=0; i<nTimes; i++) // image의 개수만큼 반복
     {
         stringstream ss;
         ss << setfill('0') << setw(6) << i; // setfill 함수를 이용하여 0으로, setw 함수를 이용하여 6만큼 채워준다.

@@ -584,13 +584,13 @@ bool LocalMapping::Stop()
 bool LocalMapping::isStopped()
 {
     unique_lock<mutex> lock(mMutexStop); // unique_lock class의 객체인 lock이 mutex 객체인 mMutexStop을 소유한다.
-    return mbStopped;
+    return mbStopped; // Local mapping이 중지 되었는가에 대한 flag
 }
 
 bool LocalMapping::stopRequested()
 {
-    unique_lock<mutex> lock(mMutexStop);
-    return mbStopRequested;
+    unique_lock<mutex> lock(mMutexStop); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexStop을 소유한다.
+    return mbStopRequested; // Local mapping이 중지 요청을 받았는가에 대한 flag
 }
 
 // Q. Tracking thread에서 새로운 keyframe이 들어오면, Local Mapping을 중지한다면, 새로운 keyframe을 받아들이고 난 후에는 Local Mapping을 재게해야 한다.
@@ -622,7 +622,7 @@ void LocalMapping::Release()
 
 bool LocalMapping::AcceptKeyFrames()
 {
-    unique_lock<mutex> lock(mMutexAccept);
+    unique_lock<mutex> lock(mMutexAccept); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexAccept를 소유한다.
     return mbAcceptKeyFrames;
 }
 
@@ -634,10 +634,10 @@ void LocalMapping::SetAcceptKeyFrames(bool flag)
 
 bool LocalMapping::SetNotStop(bool flag)
 {
-    unique_lock<mutex> lock(mMutexStop);
+    unique_lock<mutex> lock(mMutexStop); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexStop을 소유한다.
 
-    if(flag && mbStopped)
-        return false;
+    if(flag && mbStopped) // flag = true and mbStopped = true
+        return false; // stop
 
     mbNotStop = flag;
 

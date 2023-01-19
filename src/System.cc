@@ -119,7 +119,7 @@ cv::Mat System::TrackStereo(const cv::Mat &imLeft, const cv::Mat &imRight, const
     if(mSensor!=STEREO) // enumerator를 객체화하여 변수로 정의했던 mSensor가 STEREO가 아니라면,
     {
         cerr << "ERROR: you called TrackStereo but input sensor was not set to STEREO." << endl;
-        exit(-1); // main 문이 꺼진다.
+        exit(-1); // exit() -> 프로그램 단위로 제어
     }
 
     // Check mode change -> FLAG만 변경
@@ -320,7 +320,7 @@ bool System::MapChanged()
 
 void System::Reset()
 {
-    unique_lock<mutex> lock(mMutexReset);
+    unique_lock<mutex> lock(mMutexReset); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexReset을 소유한다.
     mbReset = true;
 }
 
