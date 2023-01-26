@@ -52,16 +52,19 @@ void LocalMapping::Run()
     while(1)
     {
         // Tracking will see that Local Mapping is busy
-        SetAcceptKeyFrames(false);
+        SetAcceptKeyFrames(false); // mbAcceptKeyFrames = false -> 새로운 keyframe insertion과 관련된 flag 변경
+        // queue에 있는 Tracking thread에 존재하는 keyframe을 처리하기 위해, 더 이상의 keyframe을 받지 않는다.
 
         // Check if there are keyframes in the queue
-        if(CheckNewKeyFrames())
+        if(CheckNewKeyFrames()) // Tracking thread가 생성한 새로운 keyframe이 존재하면 true를 return하고, 존재하지 않으면 false를 return한다.
         {
             // BoW conversion and insertion in Map
-            ProcessNewKeyFrame();
+            ProcessNewKeyFrame(); // 현재 keyframe(tracking thread -> local mapping thread)의 모든 map point들에 대한 update, covisibility graph 상의 edge update, 현재 keyframe -> 전체 map
 
             // Check recent MapPoints
             MapPointCulling();
+            // 1) 해당 map point는 그것이 발견될 수 있는 모든 keyframe 중 25% 이상을 tracking 해야 한다.
+            // 2) 해당 map point가 생성된 후, 세 개 이상의 keyframe에서 발견되어야 한다. <-> map point가 세 개 이상의 keyframe에서 발견되지 못한다면, 언제든지 삭제될 수 있다.
 
             // Triangulate new MapPoints
             CreateNewMapPoints();
@@ -78,7 +81,7 @@ void LocalMapping::Run()
             {
                 // Local BA
                 if(mpMap->KeyFramesInMap()>2)
-                    Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpMap);
+                    Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpMap); // 보류
 
                 // Check redundant local Keyframes
                 KeyFrameCulling();
@@ -118,42 +121,50 @@ void LocalMapping::InsertKeyFrame(KeyFrame *pKF)
     mbAbortBA=true; // local mapping thread가 새로운 keyframe을 받아드릴 때, local BA를 중지하도록 flag를 변경한다.
 }
 
-
 bool LocalMapping::CheckNewKeyFrames()
 {
-    unique_lock<mutex> lock(mMutexNewKFs);
-    return(!mlNewKeyFrames.empty());
+    unique_lock<mutex> lock(mMutexNewKFs); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexNewKFs를 소유한다.
+    return(!mlNewKeyFrames.empty()); // mlNewKeyFrames.empty() = true -> return false, mlNewKeyFrames.empty() = false -> return true
+    // Tracking thread에서 생성한 새로운 keyframe이 존재하면 true를 return하고, 존재하지 않으면 false를 return한다.
 }
 
+// 현재 keyframe(tracking thread -> local mapping thread)의 모든 map point들에 대한 update, covisibility graph 상의 edge update, 현재 keyframe -> 전체 map
 void LocalMapping::ProcessNewKeyFrame()
 {
+    // Critical Section
     {
-        unique_lock<mutex> lock(mMutexNewKFs);
-        mpCurrentKeyFrame = mlNewKeyFrames.front();
-        mlNewKeyFrames.pop_front();
+        unique_lock<mutex> lock(mMutexNewKFs); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexNewKFs를 소유한다.
+        mpCurrentKeyFrame = mlNewKeyFrames.front(); // front() : 벡터의 첫 번째 요소를 반환한다.
+        // Tracking thread가 생성한 새로운 keyframe list의 첫 번째 요소 -> mpCurrentKeyFrame
+        mlNewKeyFrames.pop_front(); // pop_front() : 리스트 제일 앞의 원소 삭제
+        // Local mapping thread의 처리 대상인 새로운 keyframe list에서 현재 처리 중인 keyframe을 삭제한다.
     }
 
     // Compute Bags of Words structures
-    mpCurrentKeyFrame->ComputeBoW();
+    mpCurrentKeyFrame->ComputeBoW(); // 현재 keyframe의 BoW vector 혹은 Feature vector가 존재하지 않는다면, 다시 계산한다.
 
     // Associate MapPoints to the new keyframe and update normal and descriptor
-    const vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
+    const vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches(); // 현재 keyframe의 keypoint와 association 관계를 가지는 모든 map point
 
-    for(size_t i=0; i<vpMapPointMatches.size(); i++)
+    for(size_t i=0; i<vpMapPointMatches.size(); i++) // Q. Null 값도 포함할 것이기 때문에, 현재 keyframe의 keypoint 개수와 같을 것이다.
     {
-        MapPoint* pMP = vpMapPointMatches[i];
-        if(pMP)
+        MapPoint* pMP = vpMapPointMatches[i]; // 현재 keyframe의 i번째 keypoint와 association 관계를 가지는 map point -> pMP
+        if(pMP) // pMP가 존재한다면,
         {
-            if(!pMP->isBad())
+            if(!pMP->isBad()) // 해당 map point가 나쁘지 않다고 판단되면,
             {
-                if(!pMP->IsInKeyFrame(mpCurrentKeyFrame))
+                // Q. tracking thread에서 local mapping thread로 현재 frame을 keyframe으로 만들어 넘겨줄 때, depth 정보를 이용하여 correspondence가 없는 keypoint에 대하여 생성한 map point?
+                if(!pMP->IsInKeyFrame(mpCurrentKeyFrame)) // Q. 해당 map point가 현재 keyframe에서 발견되었다면 true를 return, 발견되지 않았다면 false를 return
+                // pMP->IsInKeyFrame(mpCurrentKeyFrame) = false -> 해당 map point가 현재 keyframe에서 발견되지 않았다면,
                 {
-                    pMP->AddObservation(mpCurrentKeyFrame, i);
-                    pMP->UpdateNormalAndDepth();
-                    pMP->ComputeDistinctiveDescriptors();
+                    pMP->AddObservation(mpCurrentKeyFrame, i); // Data Association -> 해당 map point가 현재 keyframe에서 발견된 i번째 keypoint인지 저장한다.
+                    pMP->UpdateNormalAndDepth(); // 해당 map point의 min distance, max distance와 normal vector를 계산한다.
+                    pMP->ComputeDistinctiveDescriptors(); // 해당 map point의 representative descriptor(다른 descriptor와의 hamming distance가 가장 작은 descriptor)를 저장한다.
                 }
-                else // this can only happen for new stereo points inserted by the Tracking
+                else // this can only happen for new stereo points inserted by the Tracking -> Q.
+                // pMP->IsInKeyFrame(mpCurrentKeyFrame) = true -> 해당 map point가 현재 keyframe에서 발견되었다면,
                 {
+                    // Q. tracking thread에서 local mapping thread로 현재 frame을 keyframe으로 만들어 넘겨줄 때, 이미 keypoint와 association 관계가 있던 map point?
                     mlpRecentAddedMapPoints.push_back(pMP);
                 }
             }
@@ -161,46 +172,55 @@ void LocalMapping::ProcessNewKeyFrame()
     }    
 
     // Update links in the Covisibility Graph
-    mpCurrentKeyFrame->UpdateConnections();
+    mpCurrentKeyFrame->UpdateConnections(); 
+    // 현재 keyframe의 15개 이상의 map point들이 관측된 keyframe, 현재 keyframe의 map point들이 특정 keyframe에서 관측된 횟수(>= 15) = weight -> parent keyframe, child keyframe update
 
     // Insert Keyframe in Map
-    mpMap->AddKeyFrame(mpCurrentKeyFrame);
+    mpMap->AddKeyFrame(mpCurrentKeyFrame); // mspKeyFrames.insert(mpCurrentKeyFrame)
 }
 
 void LocalMapping::MapPointCulling()
 {
     // Check Recent Added MapPoints
-    list<MapPoint*>::iterator lit = mlpRecentAddedMapPoints.begin();
-    const unsigned long int nCurrentKFid = mpCurrentKeyFrame->mnId;
+    list<MapPoint*>::iterator lit = mlpRecentAddedMapPoints.begin(); // 현재 keyframe(tracking thread -> local mapping thread) 상의 keypoint와 association 관계를 갖는 map point
+    const unsigned long int nCurrentKFid = mpCurrentKeyFrame->mnId; // 현재 keyframe id
 
     int nThObs;
-    if(mbMonocular)
+    if(mbMonocular) // mbMonocular = true
         nThObs = 2;
-    else
+    else // mbMonocular = false
         nThObs = 3;
     const int cnThObs = nThObs;
 
-    while(lit!=mlpRecentAddedMapPoints.end())
+    while(lit!=mlpRecentAddedMapPoints.end()) // 현재 keyframe(tracking thread -> local mapping thread) 상의 keypoint와 association 관계를 갖는 모든 map point에 대하여 반복
     {
-        MapPoint* pMP = *lit;
-        if(pMP->isBad())
+        MapPoint* pMP = *lit; // de-reference -> map point
+        if(pMP->isBad()) // 해당 map point가 나쁘다고 판단되면,
         {
-            lit = mlpRecentAddedMapPoints.erase(lit);
+            lit = mlpRecentAddedMapPoints.erase(lit); // mlpRecentAddedMapPoints에서 해당 map point를 삭제
+            // erase() : 벡터 v에서 i번째 원소를 삭제, erase 함수의 인자는 지우고 싶은 원소의 주소이다.
         }
-        else if(pMP->GetFoundRatio()<0.25f )
+        // tracking을 할 때, 해당 map point는 그것이 발견될 수 있는 모든 keyframe 중 25% 이상에서 발견되어야 한다.
+        // mnFound -> tracking에서 해당 map point가 이용되는 횟수
+        // mnVisible -> 해당 map point가 관측되는 횟수
+        else if(pMP->GetFoundRatio()<0.25f ) // mnFound/mnVisible -> 해당 map point가 관측될 수 있는 모든 keyframe 중 실제로 tracking에 이용되는 map point 비율 < 0.25f
         {
-            pMP->SetBadFlag();
-            lit = mlpRecentAddedMapPoints.erase(lit);
+            pMP->SetBadFlag(); // 해당 map point가 관측되는 keyframe과 전체 map에서 해당 map point를 삭제한다.
+            lit = mlpRecentAddedMapPoints.erase(lit); // mlpRecentAddedMapPoints에서 해당 map point를 삭제
         }
+        // 해당 map point는 만들어진 후, 적어도 세 개 이상의 keyframe에서 발견되어야 한다.
+        // ex) nCurrentKFid = 2, pMP->mnFirstKFid = 0 -> 해당 map point는 0, 1, 2에서 발견될 수 있다.
+        // 현재 keyframe id - 해당 map point가 처음 만들어질 때의 keyframe id >= 2, 해당 map point가 관측되는 keyframe <= 3(현재 keyframe 제외)
         else if(((int)nCurrentKFid-(int)pMP->mnFirstKFid)>=2 && pMP->Observations()<=cnThObs)
         {
-            pMP->SetBadFlag();
-            lit = mlpRecentAddedMapPoints.erase(lit);
+            pMP->SetBadFlag(); // 해당 map point가 관측되는 keyframe과 전체 map에서 해당 map point를 삭제한다.
+            lit = mlpRecentAddedMapPoints.erase(lit); // mlpRecentAddedMapPoints에서 해당 map point를 삭제
         }
+        // 현재 keyframe id - 해당 map point가 처음 만들어질 때의 keyframe id >= 3 -> Q. 
         else if(((int)nCurrentKFid-(int)pMP->mnFirstKFid)>=3)
-            lit = mlpRecentAddedMapPoints.erase(lit);
+            lit = mlpRecentAddedMapPoints.erase(lit); // mlpRecentAddedMapPoints에서 해당 map point를 삭제
         else
-            lit++;
+            lit++; // lit++ -> 다음의 map point
     }
 }
 
@@ -208,20 +228,21 @@ void LocalMapping::CreateNewMapPoints()
 {
     // Retrieve neighbor keyframes in covisibility graph
     int nn = 10;
-    if(mbMonocular)
+    if(mbMonocular) // mbMonocular = true
         nn=20;
-    const vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn);
+    const vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn); // 현재 keyframe과 covisibility graph 상의 10개 이하의 neighbor keyframes
 
     ORBmatcher matcher(0.6,false);
 
-    cv::Mat Rcw1 = mpCurrentKeyFrame->GetRotation();
-    cv::Mat Rwc1 = Rcw1.t();
-    cv::Mat tcw1 = mpCurrentKeyFrame->GetTranslation();
-    cv::Mat Tcw1(3,4,CV_32F);
-    Rcw1.copyTo(Tcw1.colRange(0,3));
-    tcw1.copyTo(Tcw1.col(3));
-    cv::Mat Ow1 = mpCurrentKeyFrame->GetCameraCenter();
+    cv::Mat Rcw1 = mpCurrentKeyFrame->GetRotation(); // 현재 keyframe의 world to camera coordinate의 rotation
+    cv::Mat Rwc1 = Rcw1.t(); // 현재 keyframe의 camera to world coordinate의 rotation
+    cv::Mat tcw1 = mpCurrentKeyFrame->GetTranslation(); // 현재 keyframe의 world to camera coordinate의 translation
+    cv::Mat Tcw1(3,4,CV_32F); // Mat(int rows, int cols, int type) -> [3, 4] matrix
+    Rcw1.copyTo(Tcw1.colRange(0,3)); // 현재 keyframe의 world to camera coordinate의 rotation -> Tcw1
+    tcw1.copyTo(Tcw1.col(3)); // 현재 keyframe의 world to camera coordinate의 translation -> Tcw1
+    cv::Mat Ow1 = mpCurrentKeyFrame->GetCameraCenter(); // world 좌표계 상에서의 현재 keyframe의 위치, camera to world coordinate의 translation
 
+    // intrinsic parameter
     const float &fx1 = mpCurrentKeyFrame->fx;
     const float &fy1 = mpCurrentKeyFrame->fy;
     const float &cx1 = mpCurrentKeyFrame->cx;
@@ -234,24 +255,27 @@ void LocalMapping::CreateNewMapPoints()
     int nnew=0;
 
     // Search matches with epipolar restriction and triangulate
+    // 현재 keyframe의 covisibility graph 상의 10개 이하의 neighbor keyframes 개수만큼 반복
     for(size_t i=0; i<vpNeighKFs.size(); i++)
     {
-        if(i>0 && CheckNewKeyFrames())
-            return;
+        // 하나 이상의 neighbor keyframe을 처리한 후, tracking thread에서 생성한 새로운 keyframe이 존재하면,
+        if(i>0 && CheckNewKeyFrames()) // CheckNewKeyFrames() -> Tracking thread에서 생성한 새로운 keyframe이 존재하면 true를 return하고, 존재하지 않으면 false를 return한다.
+            return; // 해당 함수를 빠져나가라.
 
-        KeyFrame* pKF2 = vpNeighKFs[i];
+        KeyFrame* pKF2 = vpNeighKFs[i]; // 현재 keyframe의 covisibility graph 상의 i번째 neighbor keyframe
 
         // Check first that baseline is not too short
-        cv::Mat Ow2 = pKF2->GetCameraCenter();
-        cv::Mat vBaseline = Ow2-Ow1;
+        // parallax가 너무 작으면, 정확도가 높은 3D point를 생성할 수 없기 때문
+        cv::Mat Ow2 = pKF2->GetCameraCenter(); // world 좌표계 상에서의 neighbor keyframe의 위치, camera to world coordinate의 translation
+        cv::Mat vBaseline = Ow2-Ow1; // neighbor keyframe - 현재 keyframe baseline
         const float baseline = cv::norm(vBaseline);
 
-        if(!mbMonocular)
+        if(!mbMonocular) // mbMonocular = false
         {
-            if(baseline<pKF2->mb)
-            continue;
+            if(baseline<pKF2->mb) // neighbor keyframe과 현재 keyframe 사이의 거리 < neighbor keyframe의 baseline
+            continue; // 해당 루프의 끝으로 이동한다.
         }
-        else
+        else // mbMonocular = true
         {
             const float medianDepthKF2 = pKF2->ComputeSceneMedianDepth(2);
             const float ratioBaselineDepth = baseline/medianDepthKF2;
@@ -261,19 +285,21 @@ void LocalMapping::CreateNewMapPoints()
         }
 
         // Compute Fundamental Matrix
-        cv::Mat F12 = ComputeF12(mpCurrentKeyFrame,pKF2);
+        cv::Mat F12 = ComputeF12(mpCurrentKeyFrame,pKF2); // F = K1^(-1) x t12 x R12 x K2^(-1)
+        // R12, t12 : neighbor keyframe to 현재 keyframe coordinate의 rotation, translation
 
         // Search matches that fullfil epipolar constraint
-        vector<pair<size_t,size_t> > vMatchedIndices;
+        vector<pair<size_t,size_t> > vMatchedIndices; // 현재 keyframe의 i번째 keypoint index, 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
         matcher.SearchForTriangulation(mpCurrentKeyFrame,pKF2,F12,vMatchedIndices,false);
 
-        cv::Mat Rcw2 = pKF2->GetRotation();
-        cv::Mat Rwc2 = Rcw2.t();
-        cv::Mat tcw2 = pKF2->GetTranslation();
-        cv::Mat Tcw2(3,4,CV_32F);
+        cv::Mat Rcw2 = pKF2->GetRotation(); // keyframe 2(neighbor keyframe)의 world to camera coordinate의 rotation
+        cv::Mat Rwc2 = Rcw2.t(); // keyframe 2(neighbor keyframe)의 camera to world coordinate의 rotation
+        cv::Mat tcw2 = pKF2->GetTranslation(); // keyframe 2(neighbor keyframe)의 world to camera coordinate의 translation
+        cv::Mat Tcw2(3,4,CV_32F); // keyframe 2(neighbor keyframe)의 world to camera coordinate의 transformation
         Rcw2.copyTo(Tcw2.colRange(0,3));
         tcw2.copyTo(Tcw2.col(3));
 
+        // intrinsic parameter
         const float &fx2 = pKF2->fx;
         const float &fy2 = pKF2->fy;
         const float &cx2 = pKF2->cx;
@@ -282,26 +308,27 @@ void LocalMapping::CreateNewMapPoints()
         const float &invfy2 = pKF2->invfy;
 
         // Triangulate each match
-        const int nmatches = vMatchedIndices.size();
+        const int nmatches = vMatchedIndices.size(); // 현재 keyframe의 i번째 keypoint index, 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
         for(int ikp=0; ikp<nmatches; ikp++)
         {
-            const int &idx1 = vMatchedIndices[ikp].first;
-            const int &idx2 = vMatchedIndices[ikp].second;
+            const int &idx1 = vMatchedIndices[ikp].first; // 현재 keyframe의 i번째 keypoint index
+            const int &idx2 = vMatchedIndices[ikp].second; // 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
 
-            const cv::KeyPoint &kp1 = mpCurrentKeyFrame->mvKeysUn[idx1];
-            const float kp1_ur=mpCurrentKeyFrame->mvuRight[idx1];
-            bool bStereo1 = kp1_ur>=0;
+            const cv::KeyPoint &kp1 = mpCurrentKeyFrame->mvKeysUn[idx1]; // 현재 keyframe의 i번째 keypoint -> left image
+            const float kp1_ur=mpCurrentKeyFrame->mvuRight[idx1]; // 현재 keyframe의 i번째 keypoint -> right image
+            bool bStereo1 = kp1_ur>=0; // kp1_ur >= 0 -> bStereo1 = true
 
-            const cv::KeyPoint &kp2 = pKF2->mvKeysUn[idx2];
-            const float kp2_ur = pKF2->mvuRight[idx2];
-            bool bStereo2 = kp2_ur>=0;
+            const cv::KeyPoint &kp2 = pKF2->mvKeysUn[idx2]; // 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint -> left image
+            const float kp2_ur = pKF2->mvuRight[idx2]; // 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint -> right image
+            bool bStereo2 = kp2_ur>=0; // kp2_ur >= 0 -> bStereo2 = true
 
             // Check parallax between rays
-            cv::Mat xn1 = (cv::Mat_<float>(3,1) << (kp1.pt.x-cx1)*invfx1, (kp1.pt.y-cy1)*invfy1, 1.0);
-            cv::Mat xn2 = (cv::Mat_<float>(3,1) << (kp2.pt.x-cx2)*invfx2, (kp2.pt.y-cy2)*invfy2, 1.0);
+            // 현재 keyframe
+            cv::Mat xn1 = (cv::Mat_<float>(3,1) << (kp1.pt.x-cx1)*invfx1, (kp1.pt.y-cy1)*invfy1, 1.0); // pixel 좌표계 -> normalized plane의 metric 좌표계
+            cv::Mat xn2 = (cv::Mat_<float>(3,1) << (kp2.pt.x-cx2)*invfx2, (kp2.pt.y-cy2)*invfy2, 1.0); // pixel 좌표계 -> normalized plane의 metric 좌표계
 
-            cv::Mat ray1 = Rwc1*xn1;
-            cv::Mat ray2 = Rwc2*xn2;
+            cv::Mat ray1 = Rwc1*xn1; // 
+            cv::Mat ray2 = Rwc2*xn2; // 
             const float cosParallaxRays = ray1.dot(ray2)/(cv::norm(ray1)*cv::norm(ray2));
 
             float cosParallaxStereo = cosParallaxRays+1;
@@ -535,21 +562,24 @@ void LocalMapping::SearchInNeighbors()
 
 cv::Mat LocalMapping::ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2)
 {
-    cv::Mat R1w = pKF1->GetRotation();
-    cv::Mat t1w = pKF1->GetTranslation();
-    cv::Mat R2w = pKF2->GetRotation();
-    cv::Mat t2w = pKF2->GetTranslation();
+    cv::Mat R1w = pKF1->GetRotation(); // keyframe 1의 world to camera coordinate의 rotation
+    cv::Mat t1w = pKF1->GetTranslation(); // keyframe 1의 world to camera coordinate의 translation
+    cv::Mat R2w = pKF2->GetRotation(); // keyframe 2의 world to camera coordinate의 rotation
+    cv::Mat t2w = pKF2->GetTranslation(); // keyframe 2의 world to camera coordinate의 translation
 
-    cv::Mat R12 = R1w*R2w.t();
-    cv::Mat t12 = -R1w*R2w.t()*t2w+t1w;
+    cv::Mat R12 = R1w*R2w.t(); // keyframe 1의 world to camera coordinate의 rotation x keyframe 2의 camera to world coordinate
+    // keyframe 2의 camera to keyframe 1의 camera coordinate의 rotation
+    cv::Mat t12 = -R1w*R2w.t()*t2w+t1w; // -R2w.t()*t2w -> keyframe 2의 camera to world coordinate의 translation
+    // keyframe 1의 world to camera coordinate의 transformation x keyframe 2의 camera to world coordinate의 translation
+    // keyframe 2의 camera to keyframe 1의 camera coordinate의 translation
 
-    cv::Mat t12x = SkewSymmetricMatrix(t12);
+    cv::Mat t12x = SkewSymmetricMatrix(t12); // keyframe 2의 camera to keyframe 1의 camera coordinate의 translation vector -> translation matrix
 
-    const cv::Mat &K1 = pKF1->mK;
-    const cv::Mat &K2 = pKF2->mK;
+    const cv::Mat &K1 = pKF1->mK; // keyframe 1의 intrinsic parameter
+    const cv::Mat &K2 = pKF2->mK; // keyframe 2의 intrinsic parameter
 
 
-    return K1.t().inv()*t12x*R12*K2.inv();
+    return K1.t().inv()*t12x*R12*K2.inv(); // F = K1^(-1) x t12 x R12 x K2^(-1)
 }
 
 // 새로운 keyframe이 들어오면, Local Mapping thread에게 Local BA를 중단하라는 메시지를 보내는 함수
@@ -601,22 +631,26 @@ void LocalMapping::Release()
     unique_lock<mutex> lock(mMutexStop); // unique_lock class의 객체인 lock이 mutex 객체인 mMutexStop을 소유하고 있다.
     unique_lock<mutex> lock2(mMutexFinish); // unique_lock class의 객체인 lock2가 mutex 객체인 mMutexFinish를 소유하고 있다.
     if(mbFinished) // mbFinished = true -> Local Mapping이 끝났는지에 대한 flag
-        return; // Local Mapping이 끝났다면, 나가라.
+        return; // Local Mapping이 끝났다면, 해당 함수를 나가라.
     mbStopped = false; // Local Mapping의 중지와 관련된 flag를 false로 변경
     mbStopRequested = false; // Local Mapping을 중지하라는 요청과 관련된 flag를 false로 변경
     
     // list container는 sequence container의 일종이므로 순서를 유지하는 구조이다. vector와는 다르게 멤버 함수에서 정렬(sort, merge), 이어붙이기(splice)가 있다.
     // 원소를 탐색할 때, 임의접근 반복자(at(), [])는 불가능하고, 양방향 반복자 (++, --)를 이용하여 탐색한다.
-    // push_front(), push_back(), pop_front(), pop_back() 멤버 함수를 이용해서 list 양 끝에서 삽입, 삭제가 가능하다. 
+    // push_front(), push_back(), pop_front(), pop_back() 멤버 함수를 이용해서 list 양 끝에서 삽입, 삭제가 가능하다.
     // list의 사용 : list<Data Type> [변수 이름];
     // list<KeyFrame*>::iterator -> list의 원소들을 전부 출력하려면 iterator(반복자)를 이용해야 한다. 
     // mlNewKeyFrames list를 삭제하는 과정
     // Q. 만일 이전에 localization mode만 실행이 되었다면, 새로운 keyframe이 만들어졌을 것이기 때문에 해당 list를 지우는 과정
     // mlNewKeyFrames는 전체 keyframe에 대한 list가 아니라, tracking module에서 새롭게 결정한 keyframe일 것이다.
+    
     for(list<KeyFrame*>::iterator lit = mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++)
         delete *lit; // lit -> pointer, delete *lit -> de-reference 하여 list의 값을 삭제
     mlNewKeyFrames.clear(); // mlNewKeyFrames는 pointer -> memory 삭제
+    // delete : 해당 메모리의 할당이 취소된다.
+    // clear() : 리스트의 모든 요소를 제거한다.
 
+    // Local mapping thread가 다시 시작할 때, 이전의 새로운 keyframe list를 삭제
     cout << "Local Mapping RELEASE" << endl;
 }
 
@@ -628,10 +662,11 @@ bool LocalMapping::AcceptKeyFrames()
 
 void LocalMapping::SetAcceptKeyFrames(bool flag)
 {
-    unique_lock<mutex> lock(mMutexAccept);
+    unique_lock<mutex> lock(mMutexAccept); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexAccept를 소유한다.
     mbAcceptKeyFrames=flag;
 }
 
+// flag = true
 bool LocalMapping::SetNotStop(bool flag)
 {
     unique_lock<mutex> lock(mMutexStop); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexStop을 소유한다.
@@ -715,8 +750,10 @@ void LocalMapping::KeyFrameCulling()
     }
 }
 
+// [a1, a2, a3]' -> [0, -a3, a2; a3, 0, -a1; -a2, a1, 0]
 cv::Mat LocalMapping::SkewSymmetricMatrix(const cv::Mat &v)
 {
+    // cv::Mat_ : Mat_ 객체를 선언할 때에 << 연산자를 이용하여 개별 원소를 한 번에 초기화할 수 있기 때문에 원소의 개수가 작은 행렬의 값을 쉽게 지정할 수 있다.
     return (cv::Mat_<float>(3,3) <<             0, -v.at<float>(2), v.at<float>(1),
             v.at<float>(2),               0,-v.at<float>(0),
             -v.at<float>(1),  v.at<float>(0),              0);
@@ -741,7 +778,7 @@ void LocalMapping::RequestReset()
             if(!mbResetRequested) // mbResetRequested = false -> while문을 빠져 나가라.
                 break;
         }
-        usleep(3000); // 3000마이크로 초 동안 대기하라.
+        usleep(3000); // 3000마이크로 초 동안 대기하라. -> Local mapping thread
     }
 }
 

@@ -155,14 +155,14 @@ cv::Mat System::TrackStereo(const cv::Mat &imLeft, const cv::Mat &imRight, const
             }
 
             // Local Mapping thread가 비활성화되면, InformOnlyTracking 함수에서 true를 인수로 받아, mbOnlyTracking flag를 변경한다.
-            mpTracker->InformOnlyTracking(true); // mbOnlyTracking = true;
+            mpTracker->InformOnlyTracking(true); // mbOnlyTracking = true
             mbActivateLocalizationMode = false; // mbActivateLocalizationMode flag를 default 값으로 변경한다.
         }
         // Localization mode가 비활성화 된다면, -> SLAM mode
         if(mbDeactivateLocalizationMode) // FLAG
         {
             // Localization thread가 비활성화되면, InformOnlyTracking 함수에서 false를 인수로 받아, mbOnlyTracking flag를 변경한다. 
-            mpTracker->InformOnlyTracking(false); // mbOnlyTracking = false; -> Tracking thread를 실행하지 말라는 것이 아니라, Local Mapping thread도 같이 실행하라는 의미 같다.
+            mpTracker->InformOnlyTracking(false); // mbOnlyTracking = false -> Tracking thread를 실행하지 말라는 것이 아니라, Local Mapping thread도 같이 실행하라는 의미 같다.
             mpLocalMapper->Release(); // Q. 또 다른 새로운 keyframe을 받기 위해, 기존의 new keyframe list를 삭제
             mbDeactivateLocalizationMode = false; // mbDeactiveLocalizationMode flag를 default 값으로 변경한다.
         }

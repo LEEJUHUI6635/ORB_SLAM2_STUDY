@@ -68,8 +68,9 @@ void KeyFrameDatabase::erase(KeyFrame* pKF)
 
 void KeyFrameDatabase::clear()
 {
-    mvInvertedFile.clear();
-    mvInvertedFile.resize(mpVoc->size());
+    // inverse index -> 모든 keyframe에 대해서, 각 word를 가지고 있는 image id를 저장하고 있는 database
+    mvInvertedFile.clear(); // clear() : 리스트의 모든 요소를 제거한다.
+    mvInvertedFile.resize(mpVoc->size()); // vocabulary(word) 크기만큼 resize
 }
 
 
@@ -200,7 +201,7 @@ vector<KeyFrame*> KeyFrameDatabase::DetectLoopCandidates(KeyFrame* pKF, float mi
 // 현재 frame과 word를 공유하는 모든 keyframe을 찾는 함수 -> BoW의 첫 번째 기능(BoW vector 이용)
 vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
 {
-    list<KeyFrame*> lKFsSharingWords;
+    list<KeyFrame*> lKFsSharingWords; // 해당 frame과 word를 공유하는 모든 keyframes
 
     // Search all keyframes that share a word with current frame
     {
@@ -209,7 +210,7 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
         // DBoW2::BowVector -> std::map<WordId, WordValue>, word value -> 한 이미지 내에서 word의 빈도수
         for(DBoW2::BowVector::const_iterator vit=F->mBowVec.begin(), vend=F->mBowVec.end(); vit != vend; vit++)
         {
-            // mnInvertedFile = inverse index
+            // mnInvertedFile = inverse index -> 특정한 word를 가지고 있는 모든 keyframe
             list<KeyFrame*> &lKFs =   mvInvertedFile[vit->first]; // 특정한 word id에 해당하는 keyframes -> lKFs
             // 1개의 word id -> 여러 개의 keyframe
             for(list<KeyFrame*>::iterator lit=lKFs.begin(), lend= lKFs.end(); lit!=lend; lit++) // 특정한 word id에 속하는 keyframe의 개수만큼 반복
@@ -233,10 +234,11 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
         return vector<KeyFrame*>();
 
     // Only compare against those keyframes that share enough words
-    int maxCommonWords=0;
+    int maxCommonWords=0; // 현재 frame과 가장 많이 공유하고 있는 keyframe의 words 개수
     // lKFsSharingWords list -> 현재 frame과 word를 공유하고 있는 모든 keyframe
     for(list<KeyFrame*>::iterator lit=lKFsSharingWords.begin(), lend= lKFsSharingWords.end(); lit!=lend; lit++) // 현재 frame과 word를 공유하고 있는 모든 keyframe의 개수만큼 반복
     {
+        // *lit : de-reference -> keyframe
         if((*lit)->mnRelocWords>maxCommonWords) // keyframe->mnRelocWords : 해당 keyframe과 현재 frame이 공유하는 relocalization words의 개수
             maxCommonWords=(*lit)->mnRelocWords; // keyframe->mnRelocWords -> maxCommonWords : 각 keyframe과 현재 frame이 공유하는 가장 많은 relocalization words 개수
     }
@@ -252,14 +254,14 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
     // lKFsSharingWords list -> 특정한 word를 공유하는 keyframe
     for(list<KeyFrame*>::iterator lit=lKFsSharingWords.begin(), lend= lKFsSharingWords.end(); lit!=lend; lit++)
     {
-        KeyFrame* pKFi = *lit; // 특정한 word를 공유하는 keyframe
+        KeyFrame* pKFi = *lit; // de-reference -> 특정한 word를 공유하는 keyframe
 
         if(pKFi->mnRelocWords>minCommonWords) // 해당 keyframe과 현재 frame이 공유하는 relocalization words의 개수가 일정 threshold(maxCommonWords*0.8)를 넘으면,
         {
             nscores++;
             float si = mpVoc->score(F->mBowVec,pKFi->mBowVec); // 해당 keyframe과 현재 frame의 similarity score 계산
             pKFi->mRelocScore=si;
-            lScoreAndMatch.push_back(make_pair(si,pKFi)); // keyframe + 해당 keyframe의 similarity score
+            lScoreAndMatch.push_back(make_pair(si,pKFi)); // 하한선 이상의 keyframe + 해당 keyframe의 similarity score
         }
     }
 
@@ -276,21 +278,23 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
         KeyFrame* pKFi = it->second; // it->second : keyframe
         vector<KeyFrame*> vpNeighs = pKFi->GetBestCovisibilityKeyFrames(10); // 해당 keyframe의 covisibility graph 상에서의 10개의 neighbors(weight가 높은 순서대로) 추출
 
+        // 초기화
         float bestScore = it->first; // it->first : 해당 keyframe의 similarity score
         float accScore = bestScore;
         KeyFrame* pBestKF = pKFi;
-        for(vector<KeyFrame*>::iterator vit=vpNeighs.begin(), vend=vpNeighs.end(); vit!=vend; vit++) // 해당 keyframe의 covisibility graph 상에서 N개의 neighbors만큼 반복
+        // 해당 keyframe의 covisibility graph 상에서 N개의 neighbors만큼 반복
+        for(vector<KeyFrame*>::iterator vit=vpNeighs.begin(), vend=vpNeighs.end(); vit!=vend; vit++)
         {
-            KeyFrame* pKF2 = *vit; // neighbors keyframe
+            KeyFrame* pKF2 = *vit; // de-reference -> neighbors keyframe
             if(pKF2->mnRelocQuery!=F->mnId) // Q. 해당 keyframe의 neighbors 중에 relocalization candidate keyframe이 아니라면,
-                continue; // 해당 for문을 빠져나가라.
+                continue; // 해당 for문의 끝으로 이동한다.
 
             // Q. pKF2->mnRelocWords <= minCommonWords?
             accScore+=pKF2->mRelocScore; // neighbors keyframe의 mRelocScore(위의 코드에서 수행)까지 고려
             // 현재 frame과 word를 공유하는 keyframe의 neighbors 중, 가장 많은 word를 공유하는 keyframe을 찾는다.
             if(pKF2->mRelocScore>bestScore)
             {
-                pBestKF=pKF2;
+                pBestKF=pKF2; // 현재 frame과 words를 공유하는 keyframe의 neighbors 중 가장 similarity score가 높은 keyframe
                 bestScore = pKF2->mRelocScore;
             }
 
@@ -302,7 +306,7 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
     }
 
     // Return all those keyframes with a score higher than 0.75*bestScore
-    float minScoreToRetain = 0.75f*bestAccScore;
+    float minScoreToRetain = 0.75f*bestAccScore; // 하한선
     set<KeyFrame*> spAlreadyAddedKF;
     // set container : set container는 노드 기반 컨테이너이며 균형 이진트리로 구현되어 있다. key라 불리는 원소들의 집합으로 이루어진 container이다. 
     // key 값은 중복이 허용되지 않는다. 원소가 insert 멤버 함수에 의해 삽입이 되면, 원소는 자동으로 정렬된다.
@@ -311,10 +315,10 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F)
     // 현재 frame과 word를 공유하는 keyframe의 neighbors 중, 가장 많은 word를 공유하는 keyframe + 해당 keyframe의 similarity score
     for(list<pair<float,KeyFrame*> >::iterator it=lAccScoreAndMatch.begin(), itend=lAccScoreAndMatch.end(); it!=itend; it++)
     {
-        const float &si = it->first; // it->first : similarity score
+        const float &si = it->first; // it->first : accumulated similarity score(해당 keyframe의 neighbors까지 고려)
         if(si>minScoreToRetain)
         {
-            KeyFrame* pKFi = it->second; // it->second : neighbors keyframe
+            KeyFrame* pKFi = it->second; // it->second : neighbors keyframe 중, 가장 많은 word를 공유하는 keyframe
             if(!spAlreadyAddedKF.count(pKFi)) // 해당 keyframe이 spAlreadyAddedKF에 존재하지 않는다면 -> 중복 허용 x
             {
                 vpRelocCandidates.push_back(pKFi); // pKFi(neighbors keyframe) -> vpRelocCandidates

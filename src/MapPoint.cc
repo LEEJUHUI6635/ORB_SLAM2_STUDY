@@ -103,11 +103,11 @@ void MapPoint::AddObservation(KeyFrame* pKF, size_t idx)
     if(mObservations.count(pKF)) // count() : vector나 set과 같은 container에서 특정 원소가 몇 개 존재하는지 혹은 특정 조건을 만족하는 원소가 몇 개 포함되어 있는지를 구할 수 있다.
     // 해당 원소가 존재하지 않을 때에는 0을 반환한다.
     // 현재 keyframe이 존재한다면 return
-        return;
+        return; // 해당 함수를 빠져나가라.
     mObservations[pKF]=idx; // 새로운 map point가 어느 keyframe에서 발견된 몇 번째 keypoint인지 저장한다.
     // MapPoint::mObservations의 key : keyframe, value : keypoint의 idx
 
-    // nObs : 해당 frame에서 keypoint와 association 관계가 있는 map point의 개수
+    // nObs : 해당 map point가 keyframe에서 발견되는 횟수
     if(pKF->mvuRight[idx]>=0) // stereo의 경우, mvuRight[idx] >= 0
         nObs+=2; // left image에서 추출한 keypoint + right image에서 추출한 keypoint
     else // monocular의 경우, mvuRight[idx] < 0 
@@ -154,23 +154,28 @@ int MapPoint::Observations()
     return nObs; // 해당 map point와 일치하는 keyframe의 keypoint 개수
 }
 
+// 해당 map point가 관측되는 keyframe과 전체 map에서 해당 map point를 삭제한다.
 void MapPoint::SetBadFlag()
 {
-    map<KeyFrame*,size_t> obs;
+    map<KeyFrame*,size_t> obs; // obs->first : 해당 map point가 관측되는 keyframe, obs->second : map point와 association 관계를 갖는 keyframe 상의 keypoint index
+    // Critical Section
     {
-        unique_lock<mutex> lock1(mMutexFeatures);
-        unique_lock<mutex> lock2(mMutexPos);
-        mbBad=true;
-        obs = mObservations;
+        unique_lock<mutex> lock1(mMutexFeatures); // unique_lock class의 객체인 lock1은 mutex 객체인 mMutexFeatures를 소유한다.
+        unique_lock<mutex> lock2(mMutexPos); // unique_lock class의 객체인 lock2는 mutex 객체인 mMutexPos를 소유한다.
+        mbBad=true; // map point culling 관련 flag를 true로 변경한다.
+        obs = mObservations; // 해당 map point가 관측되는 keyframe과 map point와 association 관계를 갖는 keyframe 상의 keypoint index
         mObservations.clear();
+        // clear() : 벡터의 capacity를 줄인다는 보장이 없고, 단순히 size를 0으로 만들어 버리는 것이다.
     }
+    // 해당 map point가 관측되는 keyframe에서 해당 map point를 삭제
     for(map<KeyFrame*,size_t>::iterator mit=obs.begin(), mend=obs.end(); mit!=mend; mit++)
     {
-        KeyFrame* pKF = mit->first;
-        pKF->EraseMapPointMatch(mit->second);
+        KeyFrame* pKF = mit->first; // mit->first : 해당 map point가 관측되는 keyframe
+        pKF->EraseMapPointMatch(mit->second); // mit->second : map point와 association 관계를 갖는 keyframe 상의 keypoint index
+        // 해당 keyframe 상의 mit->second번째 keypoint와 association 관계를 갖는 map point를 Null 값으로 초기화한다.
     }
 
-    mpMap->EraseMapPoint(this);
+    mpMap->EraseMapPoint(this); // 전체 map에서 해당 map point를 삭제
 }
 
 MapPoint* MapPoint::GetReplaced()
@@ -241,11 +246,11 @@ void MapPoint::IncreaseFound(int n) // default -> n = 1
 
 float MapPoint::GetFoundRatio()
 {
-    unique_lock<mutex> lock(mMutexFeatures);
-    return static_cast<float>(mnFound)/mnVisible;
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
+    return static_cast<float>(mnFound)/mnVisible; // 해당 map point가 관측될 수 있는 모든 keyframe 중 실제로 tracking에 이용되는 map point 비율
 }
 
-// 해당 map point가 representative descriptor(hamming distance가 가장 작은 descriptor)를 저장한다.
+// 해당 map point의 representative descriptor(다른 descriptor와의 hamming distance가 가장 작은 descriptor)를 저장한다.
 void MapPoint::ComputeDistinctiveDescriptors()
 {
     // Retrieve all observed descriptors
@@ -259,18 +264,19 @@ void MapPoint::ComputeDistinctiveDescriptors()
     {
         unique_lock<mutex> lock1(mMutexFeatures); // unique_lock class인 lock1은 mutex 객체인 mMutexFeatures를 소유한다.
         if(mbBad) // mbBad = true -> map point 판별
-            return;
+            return; // 해당 함수를 빠져나가라.
         observations=mObservations; // mObservations : 해당 map point가 어떠한 keyframe의 몇 번째 keypoint에 해당하는지에 대한 정보를 담고 있다.
     }
 
     if(observations.empty()) // 해당 map point가 어떠한 keyframe의 몇 번째 keypoint에 해당하는지에 대한 정보를 담고 있지 않다면, 
-        return;
+        return; // 해당 함수를 빠져나가라.
 
     vDescriptors.reserve(observations.size()); // vDescriptors vector는 observations의 size만큼의 capacity를 확보해 놓는다.
     // reserve() : vector는 push_back()을 통해 배열의 원소를 계속 늘릴 수 있다. 그러나, vector가 처음 선언될 때 예약되어 있던 capacity를 초과하면, 그보다 더 큰 용량의 메모리를 
     // 할당한 후, 기존의 원소를 모두 복사하고 기존의 메모리는 해제하는 작업을 거치는데, 이 과정이 많이 일어나면 성능이 매우 떨어지게 된다. 
     // 따라서, 위의 문제를 해결하기 위해서 reserve(), resize() 함수를 통해 capacity를 미리 확보해 놓을 수 있는데, 두 함수의 차이는 용량 확보 후 그 공간을 초기화하느냐에 대한 여부이다.
 
+    // observations = mObservations -> keyframe, keypoint index, 해당 map point가 어떠한 keyframe의 몇 번째 association 관계를 가지는가.
     for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
     {
         // observations의 key : keyframe, value : keypoint의 idx
@@ -282,36 +288,39 @@ void MapPoint::ComputeDistinctiveDescriptors()
             // vDescriptors -> 하나의 map point에 해당하는 여러 keyframe 상의 keypoint의 descriptor, mDescriptors -> 하나의 keyframe이 가지는 모든 keypoint의 descriptor
     }
 
+    // 예외 처리
     if(vDescriptors.empty()) // vDescriptors가 비어 있다면,
-        return;
+        return; // 해당 함수를 빠져나가라.
 
     // Compute distances between them
-    const size_t N = vDescriptors.size(); // vDescriptors의 size
+    const size_t N = vDescriptors.size(); // vDescriptors의 size -> 해당 map point가 관측되는 keyframe의 개수
     // size_t는 어떤 타입의 사이즈든지 나타낼 수 있는 충분한 bytes를 가진 unsigned integer
 
     float Distances[N][N]; // 하나의 keyframe 내, N개의 descriptor 간의 거리를 포함하고 있는 정적 할당 배열
 
-    for(size_t i=0;i<N;i++)
+    for(size_t i=0;i<N;i++) // 해당 map point가 관측되는 keyframe의 개수만큼 반복
     {
         Distances[i][i]=0; // 자기 자신과의 거리는 0
         for(size_t j=i+1;j<N;j++)
         {
+            // i번째 descriptor와 j번째 descriptor와의 distance
             int distij = ORBmatcher::DescriptorDistance(vDescriptors[i],vDescriptors[j]); // 하나의 keyframe의 descriptor 간의 거리
             Distances[i][j]=distij;
-            Distances[j][i]=distij;
+            Distances[j][i]=distij; // 대칭
         }
     }
 
     // Take the descriptor with least median distance to the rest
-    int BestMedian = INT_MAX; // int의 최대값
+    int BestMedian = INT_MAX; // int의 최대값 -> 가장 작은 median 값을 구하기 위해
     int BestIdx = 0;
-    for(size_t i=0;i<N;i++)
+    for(size_t i=0;i<N;i++) // 해당 map point가 관측되는 keyframe의 개수만큼 반복
     {   // Distances -> NxN matrix, Distances[i] -> i 번째 vector(i 번째 descriptor와 다른 descriptor 간의 distance)
         vector<int> vDists(Distances[i],Distances[i]+N); // i 번째 vector 그 자체를 나타낸다.
         // Distances -> 2차원 배열, Distances[i] -> 1차원 배열, Distances[i] -> 배열의 첫 번째 원소가 가지는 주소
         sort(vDists.begin(),vDists.end()); 
         int median = vDists[0.5*(N-1)]; // vDists의 median 값 -> 보다 신뢰도 있는 정보 이용(salt and pepper noise 제거)
 
+        // 다른 descriptor와의 hamming distance가 가장 작은 descriptor -> representative descriptor
         if(median<BestMedian) // N개의 descriptor 중 각각의 median 값을 구하고, median 값이 가장 작은 descriptor를 best descriptor로 추출한다.
         {
             BestMedian = median;
@@ -329,7 +338,7 @@ void MapPoint::ComputeDistinctiveDescriptors()
 cv::Mat MapPoint::GetDescriptor()
 {
     unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
-    return mDescriptor.clone(); // 하나의 map point가 관측되는 keyframe의 keypoint descriptor
+    return mDescriptor.clone(); // 하나의 map point가 관측되는 keyframe의 keypoint descriptor, 하나의 map point를 가장 잘 표현할 수 있는 representative descriptor
 }
 
 int MapPoint::GetIndexInKeyFrame(KeyFrame *pKF)
@@ -343,8 +352,9 @@ int MapPoint::GetIndexInKeyFrame(KeyFrame *pKF)
 
 bool MapPoint::IsInKeyFrame(KeyFrame *pKF)
 {
-    unique_lock<mutex> lock(mMutexFeatures);
-    return (mObservations.count(pKF));
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
+    return (mObservations.count(pKF)); // mObservations -> 해당 map point가 어떤 keyframe의 몇 번째 keypoint에서 관측되었는가에 대한 정보를 가지고 있다.
+    // 해당 map point가 특정 keyframe에서 발견되었다면 true, 발견되지 않았다면 false
 }
 
 void MapPoint::UpdateNormalAndDepth()
@@ -360,7 +370,7 @@ void MapPoint::UpdateNormalAndDepth()
         unique_lock<mutex> lock1(mMutexFeatures); // unique_lock class의 객체인 lock1은 mutex 객체인 mMutexFeatures를 소유한다.
         unique_lock<mutex> lock2(mMutexPos); // unique_lock class의 객체인 lock2는 mutex 객체인 mMutexPos를 소유한다.
         if(mbBad) // map point를 지울 것인지에 대한 flag
-            return;
+            return; // 해당 함수를 빠져나가라.
         // map point가 담고 있는 정보
         observations=mObservations; // 해당 map point가 어떠한 keyframe에서 발견되고, 해당 keyframe에서 몇 번째 keypoint인지에 대한 정보를 담고 있다.
         pRefKF=mpRefKF; // Reference Keyframe
@@ -381,11 +391,12 @@ void MapPoint::UpdateNormalAndDepth()
         cv::Mat Owi = pKF->GetCameraCenter(); // world 좌표계 상에서의 camera의 위치, Twc의 translation, 해당하는 keyframe의 위치 in world coordinate
         cv::Mat normali = mWorldPos - Owi; // map point와 해당 map point가 관측되는 keyframe의 optical center
         normal = normal + normali/cv::norm(normali); // [3, 1], map point와 해당하는 map point가 관측되는 모든 keyframe의 optical center와의 벡터의 합
+        // cv::norm(normali) -> map point와 해당 map point가 관측되는 keyframe의 optical center 간의 거리
         n++; // n = observations의 개수
     }
 
     cv::Mat PC = Pos - pRefKF->GetCameraCenter(); // map point와 reference keyframe의 optical center와의 벡터
-    const float dist = cv::norm(PC);
+    const float dist = cv::norm(PC); // map point와 reference keyframe의 optical center와의 거리
     // reference keyframe에 대한 scale parameter 계산
     const int level = pRefKF->mvKeysUn[observations[pRefKF]].octave; // observations[pRefKF] -> 해당 map point가 reference keyframe의 몇 번째 keypoint인지
     // cv::KeyPoint::octave() -> 특징점이 추출된 옥타브(피라미드 단계)를 나타낸다.
@@ -437,7 +448,7 @@ int MapPoint::PredictScale(const float &currentDist, Frame* pF)
 {
     float ratio;
     {
-        unique_lock<mutex> lock(mMutexPos); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexPos를 소유한다.
+        unique_lock<mutex> lock(mMutexPos);
         ratio = mfMaxDistance/currentDist;
     }
 

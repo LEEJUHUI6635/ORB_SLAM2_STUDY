@@ -47,10 +47,12 @@ void Map::AddMapPoint(MapPoint *pMP)
     mspMapPoints.insert(pMP); // pMP -> Map::mspMapPoints
 }
 
+// 전체 map에서 해당 map point를 삭제
 void Map::EraseMapPoint(MapPoint *pMP)
 {
-    unique_lock<mutex> lock(mMutexMap);
-    mspMapPoints.erase(pMP);
+    unique_lock<mutex> lock(mMutexMap); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexMap을 소유한다.
+    mspMapPoints.erase(pMP); // mspMapPoints -> map에 포함되는 map points
+    // erase() : 벡터 v에서 i번째 원소를 삭제, erase 함수의 인자는 지우고 싶은 원소의 주소이다.
 
     // TODO: This only erase the pointer.
     // Delete the MapPoint

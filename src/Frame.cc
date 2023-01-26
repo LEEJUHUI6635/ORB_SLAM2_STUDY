@@ -254,6 +254,7 @@ void Frame::ExtractORB(int flag, const cv::Mat &im)
 
 void Frame::SetPose(cv::Mat Tcw) // input : world to camera coordinate, output : camera to world coordinate
 {
+    // mTcw -> Frame의 member 변수
     mTcw = Tcw.clone(); // clone() 함수는 자기 자신과 동일한 Mat 객체를 완전히 새로 만들어서 반환한다. -> 깊은 복사
     UpdatePoseMatrices(); // world to camera coordinate -> camera to world coordinate
 }
@@ -267,9 +268,10 @@ void Frame::UpdatePoseMatrices() // world to camera coordinate의 pose -> camera
 }
 
 // 해당 map point가 frustum 안에 존재하는지에 대한 여부를 결정하는 함수
+// mCurrentFrame.isInFrustum(pMP,0.5)
 bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
 {
-    pMP->mbTrackInView = false; // Q. 
+    pMP->mbTrackInView = false; // 아직 correspondence를 찾지 못한 map point
 
     // 3D in absolute coordinates
     cv::Mat P = pMP->GetWorldPos(); // 절대 좌표계인 world 좌표계 상의 map point의 position
@@ -281,7 +283,7 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
     const float &PcZ = Pc.at<float>(2); // camera 좌표계 상의 Z
 
     // Check positive depth
-    if(PcZ<0.0f) // camera 좌표계 상의 Z < 0
+    if(PcZ<0.0f) // camera 좌표계 상의 Z < 0 -> depth < 0
         return false; // 해당 map point는 frustum 안에 존재하지 않을 것이기 때문
 
     // Project in image and check it is not outside
@@ -319,7 +321,7 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
     const int nPredictedLevel = pMP->PredictScale(dist,this); // 현재 frame에 대한 map point의 scale level 계산
 
     // Data used by the tracking
-    pMP->mbTrackInView = true; // Q. 
+    pMP->mbTrackInView = true; // 해당 map point가 현재 frame의 frustum에 들어오기 때문
     pMP->mTrackProjX = u; // left image에서의 X 좌표
     pMP->mTrackProjXR = u - mbf*invz; // right image에서의 X 좌표
     pMP->mTrackProjY = v; // left image에서의 Y 좌표 = right image에서의 Y 좌표 -> rectified image이기 때문
@@ -339,7 +341,7 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
 
     // Cell의 boundaries 계산 -> grid map 상의 search 범위
     // grid size = 10 x 10
-    // 0 <= nMinCellX < 64, 0 <= nMinCellY < 48
+    // 0 <= nCellX < 64, 0 <= nCellY < 48
     const int nMinCellX = max(0,(int)floor((x-mnMinX-r)*mfGridElementWidthInv)); // max(0, (x-r)/10)
     if(nMinCellX>=FRAME_GRID_COLS) // 64
         return vIndices; // vIndices.empty() = true
@@ -363,6 +365,7 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
     {
         for(int iy = nMinCellY; iy<=nMaxCellY; iy++)
         {
+            // vCell의 크기 = 10 x 10
             const vector<size_t> vCell = mGrid[ix][iy]; // mGrid[ix][iy] -> 전체 grid map에서의 특정 grid에 속한 keypoint들의 index
             if(vCell.empty())
                 continue; // 해당 for문을 빠져나가라.
@@ -409,7 +412,7 @@ void Frame::ComputeBoW()
     if(mBowVec.empty()) // 현재 frame의 BoW vector가 비어있다면,
     {
         // Converter::Descriptor(matrix) -> Descriptor(vector)
-        vector<cv::Mat> vCurrentDesc = Converter::toDescriptorVector(mDescriptors);
+        vector<cv::Mat> vCurrentDesc = Converter::toDescriptorVector(mDescriptors); // mDescriptors -> 현재 frame의 모든 keypoints의 descriptors
         // mDescriptors -> matrix, mDescriptors의 row -> 각각의 keypoint에 대응되는 descriptor
         mpORBvocabulary->transform(vCurrentDesc,mBowVec,mFeatVec,4); // vCurrentDesc -> mBowVec(BoW vector), mFeatVec(feature vector)
         // 현재 frame의 Frame::mpORBvocabulary는 현재 frame의 모든 keypoint에 대한 descriptor를 input으로 받아, 이에 해당하는 BoW vector와 feature vector를 추출하는 함수
@@ -685,13 +688,16 @@ cv::Mat Frame::UnprojectStereo(const int &i) // i -> 하나의 keyframe 내의 k
     const float z = mvDepth[i]; // 현재 frame의 depth 정보를 vector의 형태로 가지고 있다.
     if(z>0) // monocular keyframe의 경우 depth < 0
     {
-        // mvKeysUn -> left image에서 추출한 keypoint를 undistort
+        // mvKeysUn -> undistorted left image에서 추출한 keypoint
+        // pixel coordinate
         const float u = mvKeysUn[i].pt.x; // pt -> keypoint의 coordinate, keypoint의 pixel 좌표계 상의 x 좌표 u
         const float v = mvKeysUn[i].pt.y; // pt -> keypoint의 coordinate, keypoint의 pixel 좌표계 상의 y 좌표 v
+        // normalized coordinate
         const float x = (u-cx)*z*invfx; // (u-cx)*invfx : pixel 좌표 -> normalized plane 상의 metric 좌표 -> *z : camera coordinate 상의 3D point
         const float y = (v-cy)*z*invfy; // (v-cy)*invfy : pixel 좌표 -> normalized plane 상의 metric 좌표 -> *z : camera coordinate 상의 3D point
-        // Mat_ 클래스는 Mat 클래스에서 상속된 템플릿 클래스이다. 행렬 원소 접근 연산을 많이 하거나, 컴파일 타임에 행렬의 자료형을 알고 있는 경우 Mat_ 클래스를 사용한다. 
+        // Mat_ 클래스는 Mat 클래스에서 상속된 템플릿 클래스이다. 행렬 원소 접근 연산을 많이 하거나, 컴파일 타임에 행렬의 자료형을 알고 있는 경우 Mat_ 클래스를 사용한다.
         // Mat_ 객체를 선언할 때에 << 연산자를 이용하여 개별 원소를 한 번에 초기화할 수 있기 때문에 원소의 개수가 작은 행렬의 값을 쉽게 지정할 수 있다.
+        // camera coordinate
         cv::Mat x3Dc = (cv::Mat_<float>(3,1) << x, y, z); // (3, 1) matrix를 x, y, z로 초기화
         // mRwc -> camera to world coordinate의 rotation, m0w -> camera to world coordinate의 translation
         return mRwc*x3Dc+mOw; // keypoint의 pixel 좌표계 상의 값 -> camera to world coordinate transformation을 곱하여, world 좌표계 상의 3D point로 변환
