@@ -57,6 +57,7 @@ void LocalMapping::Run()
 
         // Check if there are keyframes in the queue
         if(CheckNewKeyFrames()) // Tracking thread가 생성한 새로운 keyframe이 존재하면 true를 return하고, 존재하지 않으면 false를 return한다.
+        // CheckNewKeyFrames() = true -> Tracking thread가 생성한 새로운 keyframe이 존재하면,
         {
             // BoW conversion and insertion in Map
             ProcessNewKeyFrame(); // 현재 keyframe(tracking thread -> local mapping thread)의 모든 map point들에 대한 update, covisibility graph 상의 edge update, 현재 keyframe -> 전체 map
@@ -67,51 +68,58 @@ void LocalMapping::Run()
             // 2) 해당 map point가 생성된 후, 세 개 이상의 keyframe에서 발견되어야 한다. <-> map point가 세 개 이상의 keyframe에서 발견되지 못한다면, 언제든지 삭제될 수 있다.
 
             // Triangulate new MapPoints
-            CreateNewMapPoints();
+            CreateNewMapPoints(); // 현재 keyframe과 covisibility graph 상의 10개 이하의 neighbor keyframes와의 triangulation을 통해 새로운 map point를 생성
 
-            if(!CheckNewKeyFrames())
+            if(!CheckNewKeyFrames()) // Tracking thread에서 생성한 새로운 keyframe이 존재하면 true를 return하고, 존재하지 않으면 false를 return한다.
+            // CheckNewKeyFrames() = false -> Tracking thread에서 생성한 새로운 keyframe이 존재하지 않는다면,
             {
                 // Find more matches in neighbor keyframes and fuse point duplications
-                SearchInNeighbors();
+                SearchInNeighbors(); // Tracking thread에서 생성한 새로운 keyframe이 존재하지 않는다면, 보다 많은 map point를 생성하기 위해, 기존 keyframe의 neighbor keyframes와의 correspondence를 더 찾는다.
+                // 현재 keyframe의 map point들을 neighbor keyframe에 projection하여, 더 많은 correspondence를 찾고, 현재 keyframe의 map point와 중복되는 neighbor keyframe의 map point를 fusion 한다.
             }
 
             mbAbortBA = false;
-
-            if(!CheckNewKeyFrames() && !stopRequested())
+            // CheckNewKeyFrames() -> Tracking thread에서 생성한 새로운 keyframe이 존재하면 true를 return하고, 존재하지 않으면 false를 return한다.
+            if(!CheckNewKeyFrames() && !stopRequested()) // CheckNewKeyFrames() = false and stopRequested() = false -> Tracking thread에서 생성한 새로운 keyframe이 존재하지 않고, Local mapping thread가 중지 요청을 받지 않았을 경우
             {
                 // Local BA
-                if(mpMap->KeyFramesInMap()>2)
+                if(mpMap->KeyFramesInMap()>2) // 전체 map에 포함되는 keyframe의 개수 > 2
                     Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpMap); // 보류
 
                 // Check redundant local Keyframes
+                // 현재 keyframe과 covisibility graph 상에서 연결되어 있는 keyframe에서 다른 keyframe에서 관측되는 횟수가 3번 이상인 map point의 개수 >= covisibility graph 상에서 연결되어 있는 keyframe의 모든 map point의 개수 x 0.9
+                // 해당 keyframe과 관련있는 모든 것에서 해당 keyframe에 대한 정보 삭제 + 해당 keyframe의 children keyframe의 parent keyframe을 할당
                 KeyFrameCulling();
             }
 
             mpLoopCloser->InsertKeyFrame(mpCurrentKeyFrame);
         }
-        else if(Stop())
+        else if(Stop()) // CheckNewKeyFrames() = false -> Tracking thread가 생성한 새로운 keyframe이 존재하지 않으면,
+        // Stop() = true <- mbStopRequested = true and mbNotStop = false
         {
             // Safe area to stop
-            while(isStopped() && !CheckFinish())
+            while(isStopped() && !CheckFinish()) // isStopped() = true and CheckFinish() = false
+            // isStoppped() -> Local mapping이 중지 되었는가에 대한 flag인 mbStopped = true인 경우
+            // CheckFinish() -> mbFinishRequested = false인 경우
             {
-                usleep(3000);
+                usleep(3000); // 3000us 동안 호출 프로세스의 실행을 일시 중지한다.
             }
-            if(CheckFinish())
-                break;
+            if(CheckFinish()) // CheckFinish() = true
+                break; // 해당 루프를 종료한다.
         }
 
-        ResetIfRequested();
+        ResetIfRequested(); // mbResetRequested = true -> local mapping thread의 처리 대상인 새로운 keyframe list + mlpRecentAddedMapPoints 삭제 
 
         // Tracking will see that Local Mapping is busy
-        SetAcceptKeyFrames(true);
+        SetAcceptKeyFrames(true); // mbAcceptKeyFrames = true
 
-        if(CheckFinish())
-            break;
+        if(CheckFinish()) // CheckFinish() = true
+            break; // 해당 루프를 종료한다.
 
-        usleep(3000);
+        usleep(3000); // 3000us 동안 호출 프로세스의 실행을 일시 중지한다.
     }
 
-    SetFinish();
+    SetFinish(); // mbFinished = true, mbStopped = true
 }
 
 void LocalMapping::InsertKeyFrame(KeyFrame *pKF)
@@ -224,6 +232,7 @@ void LocalMapping::MapPointCulling()
     }
 }
 
+// 현재 keyframe과 covisibility graph 상의 10개 이하의 neighbor keyframes와의 triangulation을 통해 새로운 map point를 생성
 void LocalMapping::CreateNewMapPoints()
 {
     // Retrieve neighbor keyframes in covisibility graph
@@ -258,6 +267,7 @@ void LocalMapping::CreateNewMapPoints()
     // 현재 keyframe의 covisibility graph 상의 10개 이하의 neighbor keyframes 개수만큼 반복
     for(size_t i=0; i<vpNeighKFs.size(); i++)
     {
+        // Q. 적어도 하나 이상의 neighbor keyframe과 현재 keyframe 간의 map point를 생성할 수 있는 조건이 되었고, 새로운 keyframe이 들어오면, -> 이것을 처리하기 위해
         // 하나 이상의 neighbor keyframe을 처리한 후, tracking thread에서 생성한 새로운 keyframe이 존재하면,
         if(i>0 && CheckNewKeyFrames()) // CheckNewKeyFrames() -> Tracking thread에서 생성한 새로운 keyframe이 존재하면 true를 return하고, 존재하지 않으면 false를 return한다.
             return; // 해당 함수를 빠져나가라.
@@ -267,8 +277,8 @@ void LocalMapping::CreateNewMapPoints()
         // Check first that baseline is not too short
         // parallax가 너무 작으면, 정확도가 높은 3D point를 생성할 수 없기 때문
         cv::Mat Ow2 = pKF2->GetCameraCenter(); // world 좌표계 상에서의 neighbor keyframe의 위치, camera to world coordinate의 translation
-        cv::Mat vBaseline = Ow2-Ow1; // neighbor keyframe - 현재 keyframe baseline
-        const float baseline = cv::norm(vBaseline);
+        cv::Mat vBaseline = Ow2-Ow1; // neighbor keyframe - 현재 keyframe baseline -> parallax
+        const float baseline = cv::norm(vBaseline); // baseline의 크기 -> L2-norm
 
         if(!mbMonocular) // mbMonocular = false
         {
@@ -290,7 +300,7 @@ void LocalMapping::CreateNewMapPoints()
 
         // Search matches that fullfil epipolar constraint
         vector<pair<size_t,size_t> > vMatchedIndices; // 현재 keyframe의 i번째 keypoint index, 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
-        matcher.SearchForTriangulation(mpCurrentKeyFrame,pKF2,F12,vMatchedIndices,false);
+        matcher.SearchForTriangulation(mpCurrentKeyFrame,pKF2,F12,vMatchedIndices,false); // vMatchedIndices[i] = 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
 
         cv::Mat Rcw2 = pKF2->GetRotation(); // keyframe 2(neighbor keyframe)의 world to camera coordinate의 rotation
         cv::Mat Rwc2 = Rcw2.t(); // keyframe 2(neighbor keyframe)의 camera to world coordinate의 rotation
@@ -308,16 +318,19 @@ void LocalMapping::CreateNewMapPoints()
         const float &invfy2 = pKF2->invfy;
 
         // Triangulate each match
-        const int nmatches = vMatchedIndices.size(); // 현재 keyframe의 i번째 keypoint index, 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
+        const int nmatches = vMatchedIndices.size();
+        // vMatchedIndices[ikp] = 현재 keyframe의 i번째 keypoint index, 현재 keyframe의 ikp번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
         for(int ikp=0; ikp<nmatches; ikp++)
         {
             const int &idx1 = vMatchedIndices[ikp].first; // 현재 keyframe의 i번째 keypoint index
             const int &idx2 = vMatchedIndices[ikp].second; // 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
 
+            // 현재 keyframe
             const cv::KeyPoint &kp1 = mpCurrentKeyFrame->mvKeysUn[idx1]; // 현재 keyframe의 i번째 keypoint -> left image
             const float kp1_ur=mpCurrentKeyFrame->mvuRight[idx1]; // 현재 keyframe의 i번째 keypoint -> right image
             bool bStereo1 = kp1_ur>=0; // kp1_ur >= 0 -> bStereo1 = true
 
+            // neighbor keyframe
             const cv::KeyPoint &kp2 = pKF2->mvKeysUn[idx2]; // 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint -> left image
             const float kp2_ur = pKF2->mvuRight[idx2]; // 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint -> right image
             bool bStereo2 = kp2_ur>=0; // kp2_ur >= 0 -> bStereo2 = true
@@ -326,73 +339,86 @@ void LocalMapping::CreateNewMapPoints()
             // 현재 keyframe
             cv::Mat xn1 = (cv::Mat_<float>(3,1) << (kp1.pt.x-cx1)*invfx1, (kp1.pt.y-cy1)*invfy1, 1.0); // pixel 좌표계 -> normalized plane의 metric 좌표계
             cv::Mat xn2 = (cv::Mat_<float>(3,1) << (kp2.pt.x-cx2)*invfx2, (kp2.pt.y-cy2)*invfy2, 1.0); // pixel 좌표계 -> normalized plane의 metric 좌표계
-
-            cv::Mat ray1 = Rwc1*xn1; // 
-            cv::Mat ray2 = Rwc2*xn2; // 
-            const float cosParallaxRays = ray1.dot(ray2)/(cv::norm(ray1)*cv::norm(ray2));
+            
+            // translation x 
+            cv::Mat ray1 = Rwc1*xn1; // keyframe 1(현재 keyframe)의 camera to world coordinate의 rotation x normalized plane의 metric 좌표계 상의, 현재 keyframe의 keypoint
+            cv::Mat ray2 = Rwc2*xn2; // keyframe 2(neighbor keyframe)의 camera to world coordinate의 rotation x normalized plane의 metric 좌표계 상의, neighbor keyframe의 keypoint
+            const float cosParallaxRays = ray1.dot(ray2)/(cv::norm(ray1)*cv::norm(ray2)); // cos(theta) = cos(ray1과 ray2 사이의 각도)
 
             float cosParallaxStereo = cosParallaxRays+1;
             float cosParallaxStereo1 = cosParallaxStereo;
             float cosParallaxStereo2 = cosParallaxStereo;
 
-            if(bStereo1)
-                cosParallaxStereo1 = cos(2*atan2(mpCurrentKeyFrame->mb/2,mpCurrentKeyFrame->mvDepth[idx1]));
-            else if(bStereo2)
-                cosParallaxStereo2 = cos(2*atan2(pKF2->mb/2,pKF2->mvDepth[idx2]));
+            if(bStereo1) // bStereo1 = true -> 현재 keyframe의 right image 상의 keypoint가 존재하는가.
+                cosParallaxStereo1 = cos(2*atan2(mpCurrentKeyFrame->mb/2,mpCurrentKeyFrame->mvDepth[idx1])); // 현재 keyframe의 cos(parallax / 2)
+                // atan2(y, x) = tan^(-1)(y/x)
+            else if(bStereo2) // bStereo2 = true -> neighbor keyframe의 right image 상의 keypoint가 존재하는가.
+                cosParallaxStereo2 = cos(2*atan2(pKF2->mb/2,pKF2->mvDepth[idx2])); // neighbor keyframe의 cos(parallax / 2)
 
-            cosParallaxStereo = min(cosParallaxStereo1,cosParallaxStereo2);
+            // parallax가 큰 경우를 선택해야, depth를 보다 정확히 추정할 수 있기 때문
+            cosParallaxStereo = min(cosParallaxStereo1,cosParallaxStereo2); // 최소값의 cos(parallax / 2) -> 최대값의 parallax
 
             cv::Mat x3D;
+            // (ray1과 ray2 사이의 각도 > 최대값의 parallax) and (ray1과 ray2 사이의 각도 -> 0~90) and (bStereo1 > 0 or bStereo2 > 0 or ray1과 ray2 사이의 각도 > 0에 근사한 값)
+            // 현재 keyframe(left image)와 neighbor keyframe(left image)와의 parallax가 충분히 크다면, 현재 keyframe의 keypoint와 neighbor keyframe의 keypoint와의 triangulation을 통해 map point를 생성한다.
             if(cosParallaxRays<cosParallaxStereo && cosParallaxRays>0 && (bStereo1 || bStereo2 || cosParallaxRays<0.9998))
             {
                 // Linear Triangulation Method
+                // AX = 0 (X = 3D point, A = [u x p3 - p1; v x p3 - p2; u' x p3' - p1'; v' x p3' - p2']
                 cv::Mat A(4,4,CV_32F);
+                // world to camera coordinate의 transformation x normalized plane 상의 metric 좌표 = projection matrix x pixel 좌표
                 A.row(0) = xn1.at<float>(0)*Tcw1.row(2)-Tcw1.row(0);
                 A.row(1) = xn1.at<float>(1)*Tcw1.row(2)-Tcw1.row(1);
                 A.row(2) = xn2.at<float>(0)*Tcw2.row(2)-Tcw2.row(0);
                 A.row(3) = xn2.at<float>(1)*Tcw2.row(2)-Tcw2.row(1);
 
                 cv::Mat w,u,vt;
-                cv::SVD::compute(A,w,u,vt,cv::SVD::MODIFY_A| cv::SVD::FULL_UV);
+                cv::SVD::compute(A,w,u,vt,cv::SVD::MODIFY_A| cv::SVD::FULL_UV); // svd(A) = w x u x vt
+                // cv::SVD::compute(InputArray src, OutputArray w, OutputArray u, OutputArray vt, int flags=0)
+                // MODIFY_A : allow the algorithm to modify the decomposed matrix; it can save space and speed up processing.
+                // FULL_UV : when the matrix is not squre, by default the algorithm produces u and vt matrices of sufficiently large size for the further A reconstruction;
+                // if, however, FULL_UV flag is specified, u and vt will be full-size square orthogonal matrices.
 
-                x3D = vt.row(3).t();
+                x3D = vt.row(3).t(); // SVD를 통해 least-square 방식으로 구한 map point
 
-                if(x3D.at<float>(3)==0)
-                    continue;
+                if(x3D.at<float>(3)==0) // z값이 0이라면,
+                    continue; // 해당 루프의 끝으로 이동한다.
 
                 // Euclidean coordinates
-                x3D = x3D.rowRange(0,3)/x3D.at<float>(3);
+                x3D = x3D.rowRange(0,3)/x3D.at<float>(3); // Q. normalized plane 상의 map point
 
             }
+            // bStereo1 = true and 현재 keyframe의 parallax / 2 > neighbor keyframe의 parallax / 2
             else if(bStereo1 && cosParallaxStereo1<cosParallaxStereo2)
             {
-                x3D = mpCurrentKeyFrame->UnprojectStereo(idx1);                
+                x3D = mpCurrentKeyFrame->UnprojectStereo(idx1); // 현재 keyframe 상의 keypoint와 해당하는 depth를 이용해 map point를 생성한다.    
             }
+            // bStereo2 = true and neighbor keyframe의 parallax / 2 > 현재 keyframe의 parallax / 2
             else if(bStereo2 && cosParallaxStereo2<cosParallaxStereo1)
             {
-                x3D = pKF2->UnprojectStereo(idx2);
+                x3D = pKF2->UnprojectStereo(idx2); // neighbor keyframe 상의 keypoint와 해당하는 depth를 이용해 map point를 생성한다.
             }
             else
                 continue; //No stereo and very low parallax
 
-            cv::Mat x3Dt = x3D.t();
+            cv::Mat x3Dt = x3D.t(); // [x, y, z]' -> [x, y, z]
 
             //Check triangulation in front of cameras
-            float z1 = Rcw1.row(2).dot(x3Dt)+tcw1.at<float>(2);
-            if(z1<=0)
-                continue;
+            float z1 = Rcw1.row(2).dot(x3Dt)+tcw1.at<float>(2); // world to camera coordinate x world 좌표계 상의 map point
+            if(z1<=0) // 생성된 map point를 현재 keyframe의 camera 좌표계 상으로 위치시켰을 때의 z값
+                continue; // 해당 루프의 끝으로 이동한다.
 
-            float z2 = Rcw2.row(2).dot(x3Dt)+tcw2.at<float>(2);
-            if(z2<=0)
-                continue;
+            float z2 = Rcw2.row(2).dot(x3Dt)+tcw2.at<float>(2); // world to camera coordinate x world 좌표계 상의 map point
+            if(z2<=0) // 생성된 map point를 neighbor keyframe의 camera 좌표계 상으로 위치시켰을 때의 z값
+                continue; // 해당 루프의 끝으로 이동한다.
 
             //Check reprojection error in first keyframe
-            const float &sigmaSquare1 = mpCurrentKeyFrame->mvLevelSigma2[kp1.octave];
-            const float x1 = Rcw1.row(0).dot(x3Dt)+tcw1.at<float>(0);
-            const float y1 = Rcw1.row(1).dot(x3Dt)+tcw1.at<float>(1);
+            const float &sigmaSquare1 = mpCurrentKeyFrame->mvLevelSigma2[kp1.octave]; // Q.
+            const float x1 = Rcw1.row(0).dot(x3Dt)+tcw1.at<float>(0); // world to camera coordinate x world 좌표계 상의 map point
+            const float y1 = Rcw1.row(1).dot(x3Dt)+tcw1.at<float>(1); // world to camera coordinate x world 좌표계 상의 map point
             const float invz1 = 1.0/z1;
 
-            if(!bStereo1)
+            if(!bStereo1) // bStereo1 = false -> Q. monocular
             {
                 float u1 = fx1*x1*invz1+cx1;
                 float v1 = fy1*y1*invz1+cy1;
@@ -401,24 +427,25 @@ void LocalMapping::CreateNewMapPoints()
                 if((errX1*errX1+errY1*errY1)>5.991*sigmaSquare1)
                     continue;
             }
-            else
+            else // bStereo1 = true -> stereo
             {
-                float u1 = fx1*x1*invz1+cx1;
-                float u1_r = u1 - mpCurrentKeyFrame->mbf*invz1;
-                float v1 = fy1*y1*invz1+cy1;
-                float errX1 = u1 - kp1.pt.x;
-                float errY1 = v1 - kp1.pt.y;
-                float errX1_r = u1_r - kp1_ur;
-                if((errX1*errX1+errY1*errY1+errX1_r*errX1_r)>7.8*sigmaSquare1)
-                    continue;
+                // 생성된 map point를 현재 keyframe의 pixel 좌표계로 projection
+                float u1 = fx1*x1*invz1+cx1; // left image의 pixel coordinate
+                float u1_r = u1 - mpCurrentKeyFrame->mbf*invz1; // right image의 pixel coordinate
+                float v1 = fy1*y1*invz1+cy1; // left image의 pixel coordinate = right image의 pixel coordinate
+                float errX1 = u1 - kp1.pt.x; // 생성된 map point를 projection한 pixel 좌표 - map point를 생성하는데 이용되었던 keypoint의 pixel 좌표
+                float errY1 = v1 - kp1.pt.y; // 생성된 map point를 projection한 pixel 좌표 - map point를 생성하는데 이용되었던 keypoint의 pixel 좌표
+                float errX1_r = u1_r - kp1_ur; 
+                if((errX1*errX1+errY1*errY1+errX1_r*errX1_r)>7.8*sigmaSquare1) // 총 reprojection error가 특정 threshold보다 크다면,
+                    continue; // 해당 루프의 끝으로 이동한다.
             }
 
             //Check reprojection error in second keyframe
-            const float sigmaSquare2 = pKF2->mvLevelSigma2[kp2.octave];
-            const float x2 = Rcw2.row(0).dot(x3Dt)+tcw2.at<float>(0);
-            const float y2 = Rcw2.row(1).dot(x3Dt)+tcw2.at<float>(1);
+            const float sigmaSquare2 = pKF2->mvLevelSigma2[kp2.octave]; // Q.
+            const float x2 = Rcw2.row(0).dot(x3Dt)+tcw2.at<float>(0); // world to camera coordinate x world 좌표계 상의 map point
+            const float y2 = Rcw2.row(1).dot(x3Dt)+tcw2.at<float>(1); // world to camera coordinate x world 좌표계 상의 map point
             const float invz2 = 1.0/z2;
-            if(!bStereo2)
+            if(!bStereo2) // bStereo2 = false -> Q. monocular
             {
                 float u2 = fx2*x2*invz2+cx2;
                 float v2 = fy2*y2*invz2+cy2;
@@ -427,53 +454,57 @@ void LocalMapping::CreateNewMapPoints()
                 if((errX2*errX2+errY2*errY2)>5.991*sigmaSquare2)
                     continue;
             }
-            else
+            else // bStereo2 = true -> stereo
             {
-                float u2 = fx2*x2*invz2+cx2;
-                float u2_r = u2 - mpCurrentKeyFrame->mbf*invz2;
-                float v2 = fy2*y2*invz2+cy2;
-                float errX2 = u2 - kp2.pt.x;
-                float errY2 = v2 - kp2.pt.y;
+                // 생성된 map point를 neighbor keyframe의 pixel 좌표계로 projection
+                float u2 = fx2*x2*invz2+cx2; // left image의 pixel coordinate
+                float u2_r = u2 - mpCurrentKeyFrame->mbf*invz2; // right image의 pixel coordinate
+                float v2 = fy2*y2*invz2+cy2; // left image의 pixel coordinate = right image의 pixel coordinate
+                float errX2 = u2 - kp2.pt.x; // 생성된 map point를 projection한 pixel 좌표 - map point를 생성하는데 이용되었던 keypoint의 pixel 좌표
+                float errY2 = v2 - kp2.pt.y; // 생성된 map point를 projection한 pixel 좌표 - map point를 생성하는데 이용되었던 keypoint의 pixel 좌표
                 float errX2_r = u2_r - kp2_ur;
-                if((errX2*errX2+errY2*errY2+errX2_r*errX2_r)>7.8*sigmaSquare2)
-                    continue;
+                if((errX2*errX2+errY2*errY2+errX2_r*errX2_r)>7.8*sigmaSquare2) // 총 reprojection error가 특정 threshold보다 크다면,
+                    continue; // 해당 루프의 끝으로 이동한다.
             }
 
             //Check scale consistency
-            cv::Mat normal1 = x3D-Ow1;
+            cv::Mat normal1 = x3D-Ow1; // map point - world 좌표계 상에서의 현재 keyframe의 위치(camera to world coordinate의 translation)
             float dist1 = cv::norm(normal1);
 
-            cv::Mat normal2 = x3D-Ow2;
+            cv::Mat normal2 = x3D-Ow2; // map point - world 좌표계 상에서의 neighbor keyframe의 위치(camera to world coordinate의 translation)
             float dist2 = cv::norm(normal2);
 
             if(dist1==0 || dist2==0)
-                continue;
+                continue; // 해당 루프의 끝으로 이동한다.
 
-            const float ratioDist = dist2/dist1;
+            const float ratioDist = dist2/dist1; // map point - neighbor keyframe / map point - 현재 keyframe
             const float ratioOctave = mpCurrentKeyFrame->mvScaleFactors[kp1.octave]/pKF2->mvScaleFactors[kp2.octave];
 
             /*if(fabs(ratioDist-ratioOctave)>ratioFactor)
                 continue;*/
-            if(ratioDist*ratioFactor<ratioOctave || ratioDist>ratioOctave*ratioFactor)
-                continue;
+            if(ratioDist*ratioFactor<ratioOctave || ratioDist>ratioOctave*ratioFactor) // Q. 
+            // ratioFactor = 1.5f*mpCurrentKeyFrame->mfScaleFactor
+                continue; // 해당 루프의 끝으로 이동한다.
 
             // Triangulation is succesfull
             MapPoint* pMP = new MapPoint(x3D,mpCurrentKeyFrame,mpMap);
+            
+            // Data Association -> 새로운 map point가 어느 keyframe에서 발견된 몇 번째 keypoint인지 저장한다.
+            pMP->AddObservation(mpCurrentKeyFrame,idx1); // 생성된 map point는 현재 keyframe의 idx1번째 keypoint와 association 관계를 가진다.
+            pMP->AddObservation(pKF2,idx2); // 생성된 map point는 neighbor keyframe의 idx2번째 keypoint와 association 관계를 가진다.
 
-            pMP->AddObservation(mpCurrentKeyFrame,idx1);            
-            pMP->AddObservation(pKF2,idx2);
-
+            // 생성된 map point를 각 keyframe의 mvpMapPoints vector에 귀속시킨다.
             mpCurrentKeyFrame->AddMapPoint(pMP,idx1);
             pKF2->AddMapPoint(pMP,idx2);
 
-            pMP->ComputeDistinctiveDescriptors();
+            pMP->ComputeDistinctiveDescriptors(); // 생성된 map point의 representative descriptor(다른 descriptor와의 hamming distance가 가장 작은 descriptor)를 저장한다.
 
-            pMP->UpdateNormalAndDepth();
+            pMP->UpdateNormalAndDepth(); // 생성된 map point는 max distance와 min distance, mean normal vector를 가지고 있다.
 
-            mpMap->AddMapPoint(pMP);
+            mpMap->AddMapPoint(pMP); // pMP -> Map::mspMapPoints
             mlpRecentAddedMapPoints.push_back(pMP);
 
-            nnew++;
+            nnew++; // triangulation 혹은 stereo camera의 known depth를 이용하여 생성한 map point 개수
         }
     }
 }
@@ -482,76 +513,81 @@ void LocalMapping::SearchInNeighbors()
 {
     // Retrieve neighbor keyframes
     int nn = 10;
-    if(mbMonocular)
+    if(mbMonocular) // mbMonocular = true
         nn=20;
-    const vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn);
+    const vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn); // 현재 keyframe의 covisibility graph 상에서의 10개 이하의 neighbor keyframes
     vector<KeyFrame*> vpTargetKFs;
     for(vector<KeyFrame*>::const_iterator vit=vpNeighKFs.begin(), vend=vpNeighKFs.end(); vit!=vend; vit++)
     {
-        KeyFrame* pKFi = *vit;
-        if(pKFi->isBad() || pKFi->mnFuseTargetForKF == mpCurrentKeyFrame->mnId)
-            continue;
+        KeyFrame* pKFi = *vit; // de-reference -> neighbor keyframe
+        if(pKFi->isBad() || pKFi->mnFuseTargetForKF == mpCurrentKeyFrame->mnId) // 해당 neighbor keyframe이 나쁘다고 판단되거나, 해당 neighbor keyframe이 fuse될 target keyframe이 현재 keyframe이라면(중복 방지),
+            continue; // 해당 루프의 끝으로 이동한다.
         vpTargetKFs.push_back(pKFi);
-        pKFi->mnFuseTargetForKF = mpCurrentKeyFrame->mnId;
+        pKFi->mnFuseTargetForKF = mpCurrentKeyFrame->mnId; // 중복 방지
 
         // Extend to some second neighbors
-        const vector<KeyFrame*> vpSecondNeighKFs = pKFi->GetBestCovisibilityKeyFrames(5);
+        const vector<KeyFrame*> vpSecondNeighKFs = pKFi->GetBestCovisibilityKeyFrames(5); // 해당 neighbor keyframe의 covisibility graph 상에서의 5개 이하의 neighbor keyframes
         for(vector<KeyFrame*>::const_iterator vit2=vpSecondNeighKFs.begin(), vend2=vpSecondNeighKFs.end(); vit2!=vend2; vit2++)
         {
-            KeyFrame* pKFi2 = *vit2;
+            KeyFrame* pKFi2 = *vit2; // de-reference -> neighbor keyframe의 neighbor keyframe
             if(pKFi2->isBad() || pKFi2->mnFuseTargetForKF==mpCurrentKeyFrame->mnId || pKFi2->mnId==mpCurrentKeyFrame->mnId)
-                continue;
+            // 해당 neighbor keyframe이 나쁘다고 판단되거나, 해당 neighbor keyframe이 fuse될 target keyframe이 현재 keyframe이라면(중복 방지),
+            // + 현재 keyframe의 neighbor keyframe의 neighbor keyframe이 다시 현재 keyframe이 될 수 있기 때문에 이 또한 방지한다.
+                continue; // 해당 루프의 끝으로 이동한다.
             vpTargetKFs.push_back(pKFi2);
         }
     }
 
 
     // Search matches by projection from current KF in target KFs
+    // 현재 keyframe의 map point들을 neighbor keyframe에 projection하여, 더 많은 correspondence를 찾는다. 현재 keyframe의 map point와 일치하는 neighbor keyframe의 map point가 존재한다면 fusion(map point replacement)하고, 그렇지 않다면 neighbor keyframe의 observation을 갱신한다.
     ORBmatcher matcher;
-    vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
+    vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches(); // 현재 keyframe 상의 keypoint와 association의 관계를 가지는 map point
     for(vector<KeyFrame*>::iterator vit=vpTargetKFs.begin(), vend=vpTargetKFs.end(); vit!=vend; vit++)
     {
-        KeyFrame* pKFi = *vit;
+        KeyFrame* pKFi = *vit; // de-reference -> neighbor keyframe
 
         matcher.Fuse(pKFi,vpMapPointMatches);
+        
     }
 
     // Search matches by projection from target KFs in current KF
     vector<MapPoint*> vpFuseCandidates;
-    vpFuseCandidates.reserve(vpTargetKFs.size()*vpMapPointMatches.size());
+    vpFuseCandidates.reserve(vpTargetKFs.size()*vpMapPointMatches.size()); // 현재 keyframe의 neighbor keyframe의 개수 x 현재 keyframe 상의 map point의 개수
 
-    for(vector<KeyFrame*>::iterator vitKF=vpTargetKFs.begin(), vendKF=vpTargetKFs.end(); vitKF!=vendKF; vitKF++)
+    for(vector<KeyFrame*>::iterator vitKF=vpTargetKFs.begin(), vendKF=vpTargetKFs.end(); vitKF!=vendKF; vitKF++) // 현재 keyframe의 neighbor keyframe의 개수만큼 반복
     {
-        KeyFrame* pKFi = *vitKF;
+        KeyFrame* pKFi = *vitKF; // de-reference -> 현재 keyframe의 neighbor keyframe
 
-        vector<MapPoint*> vpMapPointsKFi = pKFi->GetMapPointMatches();
+        vector<MapPoint*> vpMapPointsKFi = pKFi->GetMapPointMatches(); // neighbor keyframe 상의 keypoint와 association의 관계를 가지는 map point
 
-        for(vector<MapPoint*>::iterator vitMP=vpMapPointsKFi.begin(), vendMP=vpMapPointsKFi.end(); vitMP!=vendMP; vitMP++)
+        for(vector<MapPoint*>::iterator vitMP=vpMapPointsKFi.begin(), vendMP=vpMapPointsKFi.end(); vitMP!=vendMP; vitMP++) // neighbor keyframe의 map point의 개수만큼 반복
         {
-            MapPoint* pMP = *vitMP;
-            if(!pMP)
-                continue;
-            if(pMP->isBad() || pMP->mnFuseCandidateForKF == mpCurrentKeyFrame->mnId)
-                continue;
-            pMP->mnFuseCandidateForKF = mpCurrentKeyFrame->mnId;
+            MapPoint* pMP = *vitMP; // de-reference -> neighbor keyframe의 map point
+            if(!pMP) // pMP = NULL
+                continue; // 해당 루프의 끝으로 이동한다.
+            if(pMP->isBad() || pMP->mnFuseCandidateForKF == mpCurrentKeyFrame->mnId) // neighbor keyframe의 map point가 나쁘다고 판단하거나, 해당 map point가 이미 fusion의 대상으로 들어간 경우,
+                continue; // 해당 루프의 끝으로 이동한다.
+            pMP->mnFuseCandidateForKF = mpCurrentKeyFrame->mnId; // 중복 방지
             vpFuseCandidates.push_back(pMP);
         }
     }
 
+    // neighbor keyframe의 map point들을 현재 keyframe에 projection하여, 더 많은 correspondence를 찾는다. neighbor keyframe의 map point와 일치하는 현재 keyframe의 map point가 존재한다면 fusion(map point replacement)하고, 그렇지 않다면 현재 keyframe의 observation을 갱신한다.
     matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates);
 
 
     // Update points
-    vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
+    vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches(); // 현재 keyframe 상의 keypoint와 association의 관계를 가지는 map point
     for(size_t i=0, iend=vpMapPointMatches.size(); i<iend; i++)
     {
-        MapPoint* pMP=vpMapPointMatches[i];
-        if(pMP)
+        MapPoint* pMP=vpMapPointMatches[i]; // 현재 keyframe의 i번째 keypoint와 association의 관계를 가지는 map point
+        if(pMP) // 해당 map point가 존재한다면,
         {
-            if(!pMP->isBad())
+            if(!pMP->isBad()) // 해당 map point가 나쁘다고 판단하지 않는다면,
             {
-                pMP->ComputeDistinctiveDescriptors();
-                pMP->UpdateNormalAndDepth();
+                pMP->ComputeDistinctiveDescriptors(); // 해당 map point의 representative descriptor(다른 descriptor와의 hamming distance가 가장 작은 descriptor)를 저장한다.
+                pMP->UpdateNormalAndDepth(); // 해당 map point는 max distance와 min distance, mean normal vector를 계산한다.
             }
         }
     }
@@ -582,7 +618,6 @@ cv::Mat LocalMapping::ComputeF12(KeyFrame *&pKF1, KeyFrame *&pKF2)
     return K1.t().inv()*t12x*R12*K2.inv(); // F = K1^(-1) x t12 x R12 x K2^(-1)
 }
 
-// 새로운 keyframe이 들어오면, Local Mapping thread에게 Local BA를 중단하라는 메시지를 보내는 함수
 // 특정 thread가 특정 영역에 들어가서 mutex를 lock 하면, 다른 thread는 특정 영역에 들어올 수 없고 대기한다.
 void LocalMapping::RequestStop()
 {
@@ -595,13 +630,13 @@ void LocalMapping::RequestStop()
     
     // 아래 조건은 새로운 keyframe이 들어왔을 때, lock2 객체는 mMutexNewKFs라는 mutex 객체를 소유하게 되고, 아래 코드가 critical section으로 동작하게 된다.
     unique_lock<mutex> lock2(mMutexNewKFs); // unique_lock class의 객체인 lock2는 mutex 객체인 mMutexNewKFs를 소유한다.
-    mbAbortBA = true;
+    mbAbortBA = true; // 새로운 keyframe이 들어오면, Local Mapping thread에게 Local BA를 중단하라는 메시지를 보낸다.
 }
 
 bool LocalMapping::Stop()
 {
-    unique_lock<mutex> lock(mMutexStop);
-    if(mbStopRequested && !mbNotStop)
+    unique_lock<mutex> lock(mMutexStop); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexStop을 소유한다.
+    if(mbStopRequested && !mbNotStop) // mbStopRequested = true and mbNotStop = false
     {
         mbStopped = true;
         cout << "Local Mapping STOP" << endl;
@@ -684,69 +719,74 @@ void LocalMapping::InterruptBA()
     mbAbortBA = true;
 }
 
+// 현재 keyframe과 covisibility graph 상에서 연결되어 있는 keyframe에서 다른 keyframe에서 관측되는 횟수가 3번 이상인 map point의 개수 >= covisibility graph 상에서 연결되어 있는 keyframe의 모든 map point의 개수 x 0.9
 void LocalMapping::KeyFrameCulling()
 {
     // Check redundant keyframes (only local keyframes)
     // A keyframe is considered redundant if the 90% of the MapPoints it sees, are seen
     // in at least other 3 keyframes (in the same or finer scale)
     // We only consider close stereo points
-    vector<KeyFrame*> vpLocalKeyFrames = mpCurrentKeyFrame->GetVectorCovisibleKeyFrames();
+    vector<KeyFrame*> vpLocalKeyFrames = mpCurrentKeyFrame->GetVectorCovisibleKeyFrames(); // covisibility graph 상에서 연결되어 있는 keyframe들을 weight 순으로 정렬
 
+    // 현재 keyframe과 covisibility graph 상에서 연결되어 있는 keyframe들에 대하여 반복
     for(vector<KeyFrame*>::iterator vit=vpLocalKeyFrames.begin(), vend=vpLocalKeyFrames.end(); vit!=vend; vit++)
     {
-        KeyFrame* pKF = *vit;
-        if(pKF->mnId==0)
-            continue;
-        const vector<MapPoint*> vpMapPoints = pKF->GetMapPointMatches();
+        KeyFrame* pKF = *vit; // de-reference -> covisibility graph 상에서 연결되어 있는 keyframe
+        if(pKF->mnId==0) // 해당 keyframe이 맨 처음의 keyframe이라면,
+            continue; // 해당 루프의 끝으로 이동한다.
+        const vector<MapPoint*> vpMapPoints = pKF->GetMapPointMatches(); // covisibility graph 상에서 연결되어 있는 keyframe 상의 keypoint와 association의 관계를 가지는 map point
 
         int nObs = 3;
         const int thObs=nObs;
         int nRedundantObservations=0;
         int nMPs=0;
+        // 현재 keyframe과 covisibility graph 상에서 연결되어 있는 keyframe들의 모든 map point에 대하여 반복
         for(size_t i=0, iend=vpMapPoints.size(); i<iend; i++)
         {
-            MapPoint* pMP = vpMapPoints[i];
-            if(pMP)
+            MapPoint* pMP = vpMapPoints[i]; // covisibility graph 상에서 연결되어 있는 keyframe의 i번째 keypoint에 해당하는 map point
+            if(pMP) // 해당 map point가 존재하면,
             {
-                if(!pMP->isBad())
+                if(!pMP->isBad()) // 해당 map point가 나쁘다고 판단하지 않으면,
                 {
-                    if(!mbMonocular)
+                    if(!mbMonocular) // mbMonocular = false
                     {
-                        if(pKF->mvDepth[i]>pKF->mThDepth || pKF->mvDepth[i]<0)
-                            continue;
+                        if(pKF->mvDepth[i]>pKF->mThDepth || pKF->mvDepth[i]<0) // 해당 keyframe의 i번째 map point의 depth가 threshold보다 크거나(far points의 경우) 0보다 작은 경우
+                            continue; // 해당 루프의 끝으로 이동한다.
                     }
 
                     nMPs++;
-                    if(pMP->Observations()>thObs)
+                    if(pMP->Observations()>thObs) // 해당 map point와 일치하는 keyframe의 keypoint 개수 > 3 = 해당 map point가 3번 이상 관측된다면,
                     {
-                        const int &scaleLevel = pKF->mvKeysUn[i].octave;
-                        const map<KeyFrame*, size_t> observations = pMP->GetObservations();
+                        const int &scaleLevel = pKF->mvKeysUn[i].octave; // covisibility graph 상에서 연결되어 있는 keyframe의 i번째 keypoint의 scale level
+                        const map<KeyFrame*, size_t> observations = pMP->GetObservations(); // key : keyframe, value : keypoint index
                         int nObs=0;
+                        // 현재 keyframe과 covisibility graph 상에서 연결되어 있는 keyframe들의 모든 map point가 관측되는 모든 keyframe(covisibility graph 상에서 연결되어 있는 자기 자신의 keyframe에 대하여는 제외), keypoint에 대하여 반복
                         for(map<KeyFrame*, size_t>::const_iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
                         {
-                            KeyFrame* pKFi = mit->first;
-                            if(pKFi==pKF)
-                                continue;
-                            const int &scaleLeveli = pKFi->mvKeysUn[mit->second].octave;
+                            KeyFrame* pKFi = mit->first; // mit->first : 해당 map point가 관측되는 keyframe
+                            if(pKFi==pKF) // 자기 자신의 keyframe(covisibility graph 상에서 연결되어 있는 keyframe)의 경우에 대하여 제외한다.
+                                continue; // 해당 루프의 끝으로 이동한다.
+                            const int &scaleLeveli = pKFi->mvKeysUn[mit->second].octave; // 해당 map point가 관측되는 keyframe의 mit->second번째 keypoint의 scale level
 
-                            if(scaleLeveli<=scaleLevel+1)
+                            if(scaleLeveli<=scaleLevel+1) // Q.
                             {
-                                nObs++;
-                                if(nObs>=thObs)
-                                    break;
+                                nObs++; // 해당 map point가 관측되는 keyframe의 개수
+                                if(nObs>=thObs) // 해당 map point가 관측되는 keyframe의 개수 >= 3
+                                    break; // 해당 루프를 종료시킨다.
                             }
                         }
-                        if(nObs>=thObs)
+                        if(nObs>=thObs) // 해당 map point가 관측되는 keyframe의 개수 >= 3
                         {
-                            nRedundantObservations++;
+                            nRedundantObservations++; 
+                            // covisibility graph 상에서 연결되어 있는 keyframe에서 다른 keyframe에서 관측되는 횟수가 3번 이상인 map point의 개수
                         }
                     }
                 }
             }
         }  
 
-        if(nRedundantObservations>0.9*nMPs)
-            pKF->SetBadFlag();
+        if(nRedundantObservations>0.9*nMPs) // covisibility graph 상에서 연결되어 있는 keyframe에서 다른 keyframe에서 관측되는 횟수가 3번 이상인 map point의 개수 >= covisibility graph 상에서 연결되어 있는 keyframe의 모든 map point의 개수 x 0.9
+            pKF->SetBadFlag(); // 해당 keyframe과 관련있는 모든 것에서 해당 keyframe에 대한 정보 삭제 + 해당 keyframe의 children keyframe의 parent keyframe을 할당
     }
 }
 
@@ -782,12 +822,13 @@ void LocalMapping::RequestReset()
     }
 }
 
+// Local mapping thread를 취소
 void LocalMapping::ResetIfRequested()
 {
-    unique_lock<mutex> lock(mMutexReset);
-    if(mbResetRequested)
+    unique_lock<mutex> lock(mMutexReset); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexReset을 소유한다.
+    if(mbResetRequested) // mbResetRequested = true
     {
-        mlNewKeyFrames.clear();
+        mlNewKeyFrames.clear(); // local mapping thread의 처리 대상인 새로운 keyframe list를 삭제
         mlpRecentAddedMapPoints.clear();
         mbResetRequested=false;
     }
@@ -801,15 +842,15 @@ void LocalMapping::RequestFinish()
 
 bool LocalMapping::CheckFinish()
 {
-    unique_lock<mutex> lock(mMutexFinish);
+    unique_lock<mutex> lock(mMutexFinish); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFinish를 소유한다.
     return mbFinishRequested;
 }
 
 void LocalMapping::SetFinish()
 {
-    unique_lock<mutex> lock(mMutexFinish);
-    mbFinished = true;    
-    unique_lock<mutex> lock2(mMutexStop);
+    unique_lock<mutex> lock(mMutexFinish); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFinish를 소유한다.
+    mbFinished = true;
+    unique_lock<mutex> lock2(mMutexStop); // unique_lock class의 객체인 lock2는 mutex 객체인 mMutexStop을 소유한다.
     mbStopped = true;
 }
 

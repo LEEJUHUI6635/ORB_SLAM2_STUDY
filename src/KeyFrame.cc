@@ -71,18 +71,18 @@ void KeyFrame::ComputeBoW()
 
 void KeyFrame::SetPose(const cv::Mat &Tcw_)
 {
-    unique_lock<mutex> lock(mMutexPose);
-    Tcw_.copyTo(Tcw);
-    cv::Mat Rcw = Tcw.rowRange(0,3).colRange(0,3);
-    cv::Mat tcw = Tcw.rowRange(0,3).col(3);
-    cv::Mat Rwc = Rcw.t();
+    unique_lock<mutex> lock(mMutexPose); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexPose를 소유한다.
+    Tcw_.copyTo(Tcw); // Tcw_ -> Tcw로의 깊은 복사
+    cv::Mat Rcw = Tcw.rowRange(0,3).colRange(0,3); // world to camera coordinate의 rotation
+    cv::Mat tcw = Tcw.rowRange(0,3).col(3); // world to camera coordinate의 translation
+    cv::Mat Rwc = Rcw.t(); // camera to world coordinate의 rotation
     Ow = -Rwc*tcw; // camera to world coordinate의 translation
 
-    Twc = cv::Mat::eye(4,4,Tcw.type());
+    Twc = cv::Mat::eye(4,4,Tcw.type()); // camera to world coordinate의 transformation
     Rwc.copyTo(Twc.rowRange(0,3).colRange(0,3));
     Ow.copyTo(Twc.rowRange(0,3).col(3));
-    cv::Mat center = (cv::Mat_<float>(4,1) << mHalfBaseline, 0 , 0, 1);
-    Cw = Twc*center;
+    cv::Mat center = (cv::Mat_<float>(4,1) << mHalfBaseline, 0 , 0, 1); // left camera 기준으로 left camera와 right camera의 중심점
+    Cw = Twc*center; // world 좌표계 상의 left camera와 right camera의 중심점
 }
 
 cv::Mat KeyFrame::GetPose()
@@ -165,17 +165,18 @@ void KeyFrame::UpdateBestCovisibles()
 
 set<KeyFrame*> KeyFrame::GetConnectedKeyFrames()
 {
-    unique_lock<mutex> lock(mMutexConnections);
+    unique_lock<mutex> lock(mMutexConnections); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexConnections를 소유한다.
     set<KeyFrame*> s;
+    // mConnectedKeyFrameWeights -> 현재 keyframe에서 관측되는 map point들이 어떠한 keyframe(현재 keyframe 제외)에서 몇 번 관측되는가.
     for(map<KeyFrame*,int>::iterator mit=mConnectedKeyFrameWeights.begin();mit!=mConnectedKeyFrameWeights.end();mit++)
-        s.insert(mit->first);
+        s.insert(mit->first); // 현재 keyframe의 map point들이 관측되는 keyframe들
     return s;
 }
 
 vector<KeyFrame*> KeyFrame::GetVectorCovisibleKeyFrames()
 {
-    unique_lock<mutex> lock(mMutexConnections);
-    return mvpOrderedConnectedKeyFrames;
+    unique_lock<mutex> lock(mMutexConnections); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexConnections를 소유한다.
+    return mvpOrderedConnectedKeyFrames; // covisibility graph 상에서 연결되어 있는 keyframe들을 weight 순으로 정렬
 }
 
 // 해당 keyframe의 covisibility graph 상에서의 neighbors를 찾는 함수
@@ -206,13 +207,15 @@ vector<KeyFrame*> KeyFrame::GetCovisiblesByWeight(const int &w)
     }
 }
 
+// 기존의 keyframe에서 관측되는 map point들이 특정 keyframe에서 관측된다면, 특정 keyframe에서 관측되는 기존의 keyframe의 map point 개수를 반환한다.
 int KeyFrame::GetWeight(KeyFrame *pKF)
 {
-    unique_lock<mutex> lock(mMutexConnections);
-    if(mConnectedKeyFrameWeights.count(pKF))
-        return mConnectedKeyFrameWeights[pKF];
-    else
-        return 0;
+    unique_lock<mutex> lock(mMutexConnections); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexConnections를 소유한다.
+    // mConnectedKeyFrameWeights -> 현재 keyframe에서 관측되는 map point들이 어떠한 keyframe(현재 keyframe 제외)에서 몇 번 관측되는가. -> 15개 이상의 map point를 관측해야 mConnectedKeyFrameWeights에 귀속될 수 있다.
+    if(mConnectedKeyFrameWeights.count(pKF)) // 기존의 keyframe에서 관측되는 map point들이 특정 keyframe에서 관측된다면,
+        return mConnectedKeyFrameWeights[pKF]; // 특정 keyframe에서 관측되는 기존의 keyframe의 map point 개수
+    else // 기존의 keyframe에서 관측되는 map point들이 특정 keyframe에서 관측되지 않는다면,
+        return 0; // 특정 keyframe에서 관측되는 기존의 keyframe의 map point 개수 = 0
 }
 
 void KeyFrame::AddMapPoint(MapPoint *pMP, const size_t &idx)
@@ -242,17 +245,18 @@ void KeyFrame::ReplaceMapPointMatch(const size_t &idx, MapPoint* pMP)
 
 set<MapPoint*> KeyFrame::GetMapPoints()
 {
-    unique_lock<mutex> lock(mMutexFeatures);
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeatures를 소유한다.
     set<MapPoint*> s;
-    for(size_t i=0, iend=mvpMapPoints.size(); i<iend; i++)
+    // mvpMapPoints -> MapPoints associated to keypoints
+    for(size_t i=0, iend=mvpMapPoints.size(); i<iend; i++) // 해당하는 keyframe의 모든 keypoint 개수만큼 반복
     {
-        if(!mvpMapPoints[i])
-            continue;
-        MapPoint* pMP = mvpMapPoints[i];
-        if(!pMP->isBad())
+        if(!mvpMapPoints[i]) // 해당하는 keyframe의 i번째 map point가 존재한다면,
+            continue; // 해당 루프의 끝으로 이동한다.
+        MapPoint* pMP = mvpMapPoints[i]; // 해당하는 keyframe의 i번째 map point
+        if(!pMP->isBad()) // 해당하는 map point가 나쁘다고 판단하지 않는다면,
             s.insert(pMP);
     }
-    return s;
+    return s; // mvpMapPoints -> 해당하는 keyframe 상의 keypoint와 association 관계가 있는 모든 map point
 }
 
 // input : minObs, output : nPoints -> minObs 이상의 keyframe에서 관측되는 현재 keyframe의 map points
@@ -406,15 +410,16 @@ void KeyFrame::AddChild(KeyFrame *pKF)
 
 void KeyFrame::EraseChild(KeyFrame *pKF)
 {
-    unique_lock<mutex> lockCon(mMutexConnections);
-    mspChildrens.erase(pKF);
+    unique_lock<mutex> lockCon(mMutexConnections); // unique_lock class의 객체인 lockCon은 mutex 객체인 mMutexConnections를 소유한다.
+    mspChildrens.erase(pKF); // 기존 keyframe의 children keyframe set에서 해당 keyframe을 삭제한다.
 }
 
+// 해당 keyframe을 기존 keyframe의 parent로 설정하고, 기존 keyframe을 해당 keyframe의 children으로 설정한다.
 void KeyFrame::ChangeParent(KeyFrame *pKF)
 {
-    unique_lock<mutex> lockCon(mMutexConnections);
-    mpParent = pKF;
-    pKF->AddChild(this);
+    unique_lock<mutex> lockCon(mMutexConnections); // unique_lock class의 객체인 lockCon은 mutex 객체인 mMutexConnections를 소유한다.
+    mpParent = pKF; // 해당 keyframe을 기존 keyframe의 parent keyframe으로 설정한다.
+    pKF->AddChild(this); // 해당 keyframe의 children keyframe에 기존 keyframe을 삽입한다.
 }
 
 set<KeyFrame*> KeyFrame::GetChilds()
@@ -435,11 +440,13 @@ bool KeyFrame::hasChild(KeyFrame *pKF)
     return mspChildrens.count(pKF);
 }
 
+// mpMatchedKF->AddLoopEdge(mpCurrentKF)
+// mpCurrentKF->AddLoopEdge(mpMatchedKF)
 void KeyFrame::AddLoopEdge(KeyFrame *pKF)
 {
-    unique_lock<mutex> lockCon(mMutexConnections);
+    unique_lock<mutex> lockCon(mMutexConnections); // unique_lock class의 객체인 lockCon은 mutex 객체인 mMutexConnections를 소유한다.
     mbNotErase = true;
-    mspLoopEdges.insert(pKF);
+    mspLoopEdges.insert(pKF); // 기존 keyframe의 mspLoopEdges에 해당 keyframe을 삽입한다.
 }
 
 set<KeyFrame*> KeyFrame::GetLoopEdges()
@@ -450,59 +457,71 @@ set<KeyFrame*> KeyFrame::GetLoopEdges()
 
 void KeyFrame::SetNotErase()
 {
-    unique_lock<mutex> lock(mMutexConnections);
+    unique_lock<mutex> lock(mMutexConnections); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexConnections를 소유한다.
     mbNotErase = true;
 }
 
 void KeyFrame::SetErase()
 {
+    // Critical Section
     {
-        unique_lock<mutex> lock(mMutexConnections);
-        if(mspLoopEdges.empty())
+        unique_lock<mutex> lock(mMutexConnections); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexConnections를 소유한다.
+        if(mspLoopEdges.empty()) // mspLoopEdges.empty() = true -> 현재 keyframe node와 loop node와의 edge가 형성되지 않은 경우
         {
             mbNotErase = false;
         }
     }
 
-    if(mbToBeErased)
+    if(mbToBeErased) // mbToBeErased = true
     {
-        SetBadFlag();
+        SetBadFlag(); // Keyframe Culling : 해당 keyframe과 관련있는 모든 것에서 해당 keyframe에 대한 정보 삭제 + 해당 keyframe의 children keyframe의 parent keyframe을 할당
     }
 }
 
+// Keyframe Culling
+// 해당 keyframe과 관련있는 모든 것에서 해당 keyframe에 대한 정보 삭제 + 해당 keyframe의 children keyframe의 parent keyframe을 할당
 void KeyFrame::SetBadFlag()
 {   
     {
-        unique_lock<mutex> lock(mMutexConnections);
-        if(mnId==0)
-            return;
-        else if(mbNotErase)
+        unique_lock<mutex> lock(mMutexConnections); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexConnections를 소유한다.
+        if(mnId==0) // 해당 keyframe이 첫 번째 keyframe이라면,
+            return; // 해당 함수를 빠져나가라.
+        else if(mbNotErase) // Q. mbNotErase = true
         {
             mbToBeErased = true;
-            return;
+            return; // 해당 함수를 빠져나가라.
         }
     }
 
+    // mConnectedKeyFrameWeights -> 현재 keyframe에서 관측되는 map point들이 어떠한 keyframe(현재 keyframe 제외)에서 몇 번 관측되는가.
     for(map<KeyFrame*,int>::iterator mit = mConnectedKeyFrameWeights.begin(), mend=mConnectedKeyFrameWeights.end(); mit!=mend; mit++)
-        mit->first->EraseConnection(this);
+        mit->first->EraseConnection(this); // mit->first : 현재 keyframe에서 관측되는 map point들이 관측되는 keyframe
+        // 현재 keyframe의 map point들이 관측되는, 특정 keyframe의 mConnectedKeyFrameWeights에서 현재 keyframe을 삭제
 
-    for(size_t i=0; i<mvpMapPoints.size(); i++)
-        if(mvpMapPoints[i])
-            mvpMapPoints[i]->EraseObservation(this);
+    // mvpMapPoints -> MapPoints associated to keypoints
+    for(size_t i=0; i<mvpMapPoints.size(); i++) // 현재 keyframe의 keypoint 개수만큼 반복
+        if(mvpMapPoints[i]) // 현재 keyframe의 i번째 keypoint에 해당하는 map point가 존재한다면,
+            // 현재 keyframe의 모든 map point의 observation에서 현재 keyframe에 대한 association을 삭제한다.
+            mvpMapPoints[i]->EraseObservation(this); // 해당 map point가 특정 keyframe에서 관측된다면, 해당 map point가 관측되는 횟수를 줄인다. 이 후, 해당 map point가 3개 이상의 keyframe에서 발견되지 못한다면, 해당 map point를 삭제한다.
+    
+    // Critical Section
     {
-        unique_lock<mutex> lock(mMutexConnections);
-        unique_lock<mutex> lock1(mMutexFeatures);
+        unique_lock<mutex> lock(mMutexConnections); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexConnections를 소유한다.
+        unique_lock<mutex> lock1(mMutexFeatures); // unique_lock class의 객체인 lock1은 mutex 객체인 mMutexFeatures를 소유한다.
 
+        // 현재 keyframe의 map point들이 관측되는, 특정 keyframe의 mConnectedKeyFrameWeights에서 현재 keyframe을 삭제하였기 때문에, mConnectedKeyFrameWeights를 삭제한다.
         mConnectedKeyFrameWeights.clear();
+        // mConnectedKeyFrameWeights를 weight 순으로 정렬한 mvpOrderedConnectedKeyFrames 또한 삭제한다.
         mvpOrderedConnectedKeyFrames.clear();
 
         // Update Spanning Tree
         set<KeyFrame*> sParentCandidates;
-        sParentCandidates.insert(mpParent);
+        sParentCandidates.insert(mpParent); // mpParent : 현재 keyframe의 parent keyframe -> 현재 keyframe의 15개 이상의 map point들이 관측된 keyframe 중 가장 큰 weight을 가진 keyframe
 
         // Assign at each iteration one children with a parent (the pair with highest covisibility weight)
         // Include that children as new parent candidate for the rest
-        while(!mspChildrens.empty())
+        // 현재 keyframe의 mspChildrens가 모두 삭제될 때까지 반복
+        while(!mspChildrens.empty()) // mspChildrens.empty() = false
         {
             bool bContinue = false;
 
@@ -512,23 +531,25 @@ void KeyFrame::SetBadFlag()
 
             for(set<KeyFrame*>::iterator sit=mspChildrens.begin(), send=mspChildrens.end(); sit!=send; sit++)
             {
-                KeyFrame* pKF = *sit;
-                if(pKF->isBad())
-                    continue;
+                KeyFrame* pKF = *sit; // de-reference -> 현재 keyframe의 children keyframe
+                if(pKF->isBad()) // children keyframe이 나쁘다고 판단한다면,
+                    continue; // 해당 루프의 끝으로 이동한다.
 
                 // Check if a parent candidate is connected to the keyframe
-                vector<KeyFrame*> vpConnected = pKF->GetVectorCovisibleKeyFrames();
+                vector<KeyFrame*> vpConnected = pKF->GetVectorCovisibleKeyFrames(); // 현재 keyframe의 children keyframe과 covisibility graph 상에서 연결되어 있는 keyframe들을 weight 순으로 정렬
                 for(size_t i=0, iend=vpConnected.size(); i<iend; i++)
                 {
                     for(set<KeyFrame*>::iterator spcit=sParentCandidates.begin(), spcend=sParentCandidates.end(); spcit!=spcend; spcit++)
                     {
-                        if(vpConnected[i]->mnId == (*spcit)->mnId)
+                        // vpConnected -> 현재 keyframe의 children keyframe의 neighbors
+                        if(vpConnected[i]->mnId == (*spcit)->mnId) // 현재 keyframe의 children keyframe과 covisibility graph 상에서 연결되어 있는 i번째 keyframe = 현재 keyframe의 parent keyframe
                         {
-                            int w = pKF->GetWeight(vpConnected[i]);
-                            if(w>max)
+                            int w = pKF->GetWeight(vpConnected[i]); // children keyframe에서 관측되는 map point들이 parent keyframe에서 관측된다면, parent keyframe에서 관측되는 children keyframe의 map point 개수를 반환한다.
+                            // w -> 현재 keyframe의 children keyframe과 parent keyframe과의 edge weight
+                            if(w>max) // 현재 keyframe의 children keyframe과 parent keyframe과의 edge weight가 전보다 큰 경우
                             {
-                                pC = pKF;
-                                pP = vpConnected[i];
+                                pC = pKF; // child
+                                pP = vpConnected[i]; // parent
                                 max = w;
                                 bContinue = true;
                             }
@@ -537,31 +558,33 @@ void KeyFrame::SetBadFlag()
                 }
             }
 
-            if(bContinue)
+            // Q. 현재 keyframe의 children keyframe의 neighbor keyframe이 현재 keyframe의 children keyframe이라면, 가장 큰 weight을 가지는 pair끼리 parent - child 관계를 형성한다.
+            if(bContinue) // bContinue = true
             {
-                pC->ChangeParent(pP);
+                // 현재 keyframe이 culling되기 때문에 현재 keyframe의 children keyframe의 parent keyframe을 따로 설정해 주어야 한다.
+                pC->ChangeParent(pP); // sParentCandidates에 속한 keyframe을 현재 keyframe의 children keyframe의 parent로 설정하고, 현재 keyframe의 children keyframe을 sParentCandidates에 속한 keyframe의 children으로 설정한다.
                 sParentCandidates.insert(pC);
                 mspChildrens.erase(pC);
             }
-            else
-                break;
+            else // bContinue = false
+                break; // 해당 루프를 종료한다.
         }
 
         // If a children has no covisibility links with any parent candidate, assign to the original parent of this KF
-        if(!mspChildrens.empty())
+        if(!mspChildrens.empty()) // 앞의 과정을 수행하였음에도, 현재 keyframe의 mspChildrens가 비어있지 않다면,
             for(set<KeyFrame*>::iterator sit=mspChildrens.begin(); sit!=mspChildrens.end(); sit++)
             {
-                (*sit)->ChangeParent(mpParent);
+                (*sit)->ChangeParent(mpParent); // 남아있는 children keyframe의 parent keyframe을 현재 keyframe의 parent keyframe으로 설정한다.
             }
 
-        mpParent->EraseChild(this);
-        mTcp = Tcw*mpParent->GetPoseInverse();
+        mpParent->EraseChild(this); // 현재 keyframe의 parent keyframe의 children keyframe set에서 현재 keyframe을 삭제한다.
+        mTcp = Tcw*mpParent->GetPoseInverse(); // world to 현재 keyframe coordinate x parent keyframe to world coordinate의 pose = parent keyframe to 현재 keyframe coordinate의 pose
         mbBad = true;
     }
 
 
-    mpMap->EraseKeyFrame(this);
-    mpKeyFrameDB->erase(this);
+    mpMap->EraseKeyFrame(this); // 전체 map에 포함되는 모든 keyframe set에서 현재 keyframe을 삭제한다.
+    mpKeyFrameDB->erase(this); // 특정 word에 속하는 keyframe list에서 현재 keyframe을 삭제한다.
 }
 
 bool KeyFrame::isBad()
@@ -574,52 +597,57 @@ void KeyFrame::EraseConnection(KeyFrame* pKF)
 {
     bool bUpdate = false;
     {
-        unique_lock<mutex> lock(mMutexConnections);
-        if(mConnectedKeyFrameWeights.count(pKF))
+        unique_lock<mutex> lock(mMutexConnections); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexConnections를 소유한다.
+        // mConnectedKeyFrameWeights -> 현재 keyframe에서 관측되는 map point들이 어떠한 keyframe(현재 keyframe 제외)에서 몇 번 관측되는가.
+        if(mConnectedKeyFrameWeights.count(pKF)) // 현재 keyframe에서 관측되는 map point들이 해당 keyframe에서 관측된다면,
         {
-            mConnectedKeyFrameWeights.erase(pKF);
+            mConnectedKeyFrameWeights.erase(pKF); // mConnectedKeyFrameWeights에서 해당 keyframe을 삭제
             bUpdate=true;
         }
     }
 
-    if(bUpdate)
-        UpdateBestCovisibles();
+    if(bUpdate) // bUpdate = true -> 현재 keyframe에서 관측되는 map point들이 해당 keyframe에서 관측된다면, mConnectedKeyFrameWeights에서 해당 keyframe을 삭제하였기 때문에 update 해야 한다.
+    // 반면 bUpdate = false -> 현재 keyframe에서 관측되는 map point들이 해당 keyframe에서 관측되지 않는다면, mConnectedKeyFrameWeights에서 해당 keyframe을 삭제하지 않아도 되기 때문에 update를 하지 않아도 된다. 
+        UpdateBestCovisibles(); // 특정 keyframe의 covisibility graph 상의 neighbors를 weight 값으로 정렬한 keyframe vector + 특정 keyframe의 covisibility graph 상의 neighbors를 weight 값으로 정렬한 weight vector
 }
 
+// pKF->GetFeaturesInArea(u,v,radius) -> u, v : 현재 keyframe 상의 keypoint에 해당하는 map point를 neighbor keyframe에 projection한 pixel 좌표
 vector<size_t> KeyFrame::GetFeaturesInArea(const float &x, const float &y, const float &r) const
 {
     vector<size_t> vIndices;
-    vIndices.reserve(N);
+    vIndices.reserve(N); // neighbor keyframe의 keypoint 개수만큼 메모리 할당
 
-    const int nMinCellX = max(0,(int)floor((x-mnMinX-r)*mfGridElementWidthInv));
-    if(nMinCellX>=mnGridCols)
-        return vIndices;
+    const int nMinCellX = max(0,(int)floor((x-mnMinX-r)*mfGridElementWidthInv)); // 0 ~ (x-r)/10
+    if(nMinCellX>=mnGridCols) // 64
+        return vIndices; // vIndices.empty() = true
 
-    const int nMaxCellX = min((int)mnGridCols-1,(int)ceil((x-mnMinX+r)*mfGridElementWidthInv));
+    const int nMaxCellX = min((int)mnGridCols-1,(int)ceil((x-mnMinX+r)*mfGridElementWidthInv)); // (x+r)/10 ~ 63
     if(nMaxCellX<0)
-        return vIndices;
+        return vIndices; // vIndices.empty() = true
 
-    const int nMinCellY = max(0,(int)floor((y-mnMinY-r)*mfGridElementHeightInv));
-    if(nMinCellY>=mnGridRows)
-        return vIndices;
+    const int nMinCellY = max(0,(int)floor((y-mnMinY-r)*mfGridElementHeightInv)); // 0 ~ (y-r)/10
+    if(nMinCellY>=mnGridRows) // 48
+        return vIndices; // vIndices.empty() = true
 
-    const int nMaxCellY = min((int)mnGridRows-1,(int)ceil((y-mnMinY+r)*mfGridElementHeightInv));
+    const int nMaxCellY = min((int)mnGridRows-1,(int)ceil((y-mnMinY+r)*mfGridElementHeightInv)); // (y+r)/10 ~ 47
     if(nMaxCellY<0)
-        return vIndices;
+        return vIndices; // vIndices.empty() = true
 
+    // Cell에 존재하는 모든 keypoint들에 대하여 반복
     for(int ix = nMinCellX; ix<=nMaxCellX; ix++)
     {
         for(int iy = nMinCellY; iy<=nMaxCellY; iy++)
         {
-            const vector<size_t> vCell = mGrid[ix][iy];
-            for(size_t j=0, jend=vCell.size(); j<jend; j++)
+            // Cell에 포함되는 특정 Grid
+            const vector<size_t> vCell = mGrid[ix][iy]; // mGrid[64][48]
+            for(size_t j=0, jend=vCell.size(); j<jend; j++) // 특정 Grid에 대한 모든 keypoint에 대하여 반복
             {
-                const cv::KeyPoint &kpUn = mvKeysUn[vCell[j]];
-                const float distx = kpUn.pt.x-x;
-                const float disty = kpUn.pt.y-y;
+                const cv::KeyPoint &kpUn = mvKeysUn[vCell[j]]; // 특정 Grid에 존재하는 j번째 keypoint의 index를 가지는 keypoint
+                const float distx = kpUn.pt.x-x; // neighbor keyframe 상의 특정 Grid 안의 keypoint - 현재 keyframe 상의 keypoint에 해당하는 map point를 neighbor keyframe에 projection한 pixel 좌표
+                const float disty = kpUn.pt.y-y; // neighbor keyframe 상의 특정 Grid 안의 keypoint - 현재 keyframe 상의 keypoint에 해당하는 map point를 neighbor keyframe에 projection한 pixel 좌표
 
-                if(fabs(distx)<r && fabs(disty)<r)
-                    vIndices.push_back(vCell[j]);
+                if(fabs(distx)<r && fabs(disty)<r) // reprojection error가 search window보다 작다면,
+                    vIndices.push_back(vCell[j]); // 특정 Grid에 존재하는 j번째 keypoint의 index -> vIndices
             }
         }
     }
@@ -629,7 +657,7 @@ vector<size_t> KeyFrame::GetFeaturesInArea(const float &x, const float &y, const
 
 bool KeyFrame::IsInImage(const float &x, const float &y) const
 {
-    return (x>=mnMinX && x<mnMaxX && y>=mnMinY && y<mnMaxY);
+    return (x>=mnMinX && x<mnMaxX && y>=mnMinY && y<mnMaxY); // pixel 좌표인 x와 y가 image boundary에 있는 경우 return true, image boundary 밖에 있는 경우 return false
 }
 
 cv::Mat KeyFrame::UnprojectStereo(int i)

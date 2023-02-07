@@ -72,9 +72,9 @@ MapPoint::MapPoint(const cv::Mat &Pos, Map* pMap, Frame* pFrame, const int &idxF
 
 void MapPoint::SetWorldPos(const cv::Mat &Pos)
 {
-    unique_lock<mutex> lock2(mGlobalMutex);
-    unique_lock<mutex> lock(mMutexPos);
-    Pos.copyTo(mWorldPos);
+    unique_lock<mutex> lock2(mGlobalMutex); // unique_lock class의 객체인 lock2는 mutex 객체인 mGlobalMutex를 소유한다.
+    unique_lock<mutex> lock(mMutexPos); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexPos를 소유한다.
+    Pos.copyTo(mWorldPos); // Pos -> mWorldPos(절대 좌표계인 world 좌표계 상의 map point의 position)로의 깊은 복사
 }
 
 cv::Mat MapPoint::GetWorldPos()
@@ -114,32 +114,36 @@ void MapPoint::AddObservation(KeyFrame* pKF, size_t idx)
         nObs++; // left image에서 추출한 keypoint
 }
 
+// 해당 map point가 특정 keyframe에서 관측된다면, 해당 map point가 관측되는 횟수를 줄인다. 이 후, 해당 map point가 3개 이상의 keyframe에서 발견되지 못한다면, 해당 map point를 삭제한다.
 void MapPoint::EraseObservation(KeyFrame* pKF)
 {
     bool bBad=false;
     {
-        unique_lock<mutex> lock(mMutexFeatures);
-        if(mObservations.count(pKF))
+        unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mMutexFeatures를 소유한다.
+        // mObservations -> Keyframes observing the point and associated index in keyframe
+        if(mObservations.count(pKF)) // 해당 map point가 특정 keyframe에서 관측된다면,
         {
-            int idx = mObservations[pKF];
-            if(pKF->mvuRight[idx]>=0)
-                nObs-=2;
-            else
+            int idx = mObservations[pKF]; // 해당 map point가 특정 keyframe의 몇 번째 keypoint에 해당하는가.
+            if(pKF->mvuRight[idx]>=0) // stereo + rgb-d 
+                nObs-=2; // 해당 map point가 관측되는 횟수
+            else // monocular
                 nObs--;
 
-            mObservations.erase(pKF);
+            mObservations.erase(pKF); // 해당 map point가 관측되는 keyframe에서 해당 keyframe을 삭제한다.
 
-            if(mpRefKF==pKF)
-                mpRefKF=mObservations.begin()->first;
+            if(mpRefKF==pKF) // 해당 keyframe이 reference keyframe이라면,
+                mpRefKF=mObservations.begin()->first; // 해당 map point가 관측되는 가장 첫 번째 keyframe을 reference keyframe으로 설정한다.
+                // begin() : 벡터의 데이터가 있는 리스트의 시작 주소를 return, 첫 번째 값 위치
 
             // If only 2 observations or less, discard point
-            if(nObs<=2)
+            if(nObs<=2) // 해당 map point가 3개 이상의 keyframe에서 발견되지 못한다면, 언제든지 삭제될 수 있다.
                 bBad=true;
         }
     }
 
-    if(bBad)
-        SetBadFlag();
+    if(bBad) // bBad = true -> 해당 map point가 3개 이상의 keyframe에서 발견되지 못한다면, 언제든지 삭제될 수 있다.
+    // bBad = false -> 해당 map point가 3개 이상의 keyframe에서 발견된다면, 삭제되지 않는다.
+        SetBadFlag(); // 해당 map point가 관측되는 keyframe과 전체 map에서 해당 map point를 삭제한다.
 }
 
 map<KeyFrame*, size_t> MapPoint::GetObservations()
@@ -185,17 +189,18 @@ MapPoint* MapPoint::GetReplaced()
     return mpReplaced;
 }
 
+// 기존의 map point를 지우고, 새로운 map point로 대체한다.
 void MapPoint::Replace(MapPoint* pMP)
 {
-    if(pMP->mnId==this->mnId)
-        return;
+    if(pMP->mnId==this->mnId) // 대체 대상인 map point id와 기존 map point id가 같다면,
+        return; // 해당 함수를 빠져나가라.
 
     int nvisible, nfound;
     map<KeyFrame*,size_t> obs;
     {
-        unique_lock<mutex> lock1(mMutexFeatures);
-        unique_lock<mutex> lock2(mMutexPos);
-        obs=mObservations;
+        unique_lock<mutex> lock1(mMutexFeatures); // unique_lock class의 객체인 lock1은 mutex 객체인 mMutexFeatures를 소유한다.
+        unique_lock<mutex> lock2(mMutexPos); // unique_lock class의 객체인 lock2는 mutex 객체인 mMutexPos를 소유한다.
+        obs=mObservations; // Keyframes observing the point and associated index in keyframe, first -> 해당 map point가 관측되는 keyframe, second -> 해당 map point와 correspondence 관계가 있는 keyframe의 keypoint index
         mObservations.clear();
         mbBad=true;
         nvisible = mnVisible;
@@ -203,26 +208,30 @@ void MapPoint::Replace(MapPoint* pMP)
         mpReplaced = pMP;
     }
 
-    for(map<KeyFrame*,size_t>::iterator mit=obs.begin(), mend=obs.end(); mit!=mend; mit++)
+    for(map<KeyFrame*,size_t>::iterator mit=obs.begin(), mend=obs.end(); mit!=mend; mit++) // 기존의 map point가 관측되는 모든 keyframe, keypoint 개수만큼 반복
     {
         // Replace measurement in keyframe
-        KeyFrame* pKF = mit->first;
+        KeyFrame* pKF = mit->first; // 기존의 map point가 관측되는 keyframe
 
-        if(!pMP->IsInKeyFrame(pKF))
+        // 대체 대상인 map point가 기존의 map point가 관측되는 keyframe에서 발견되지 않았다면,
+        if(!pMP->IsInKeyFrame(pKF)) // 해당 map point가 특정 keyframe에서 발견되었다면 true, 발견되지 않았다면 false
+        // pMP->IsInKeyFrame(pKF) = false -> 해당 map point가 특정 keyframe에서 발견되지 않았다면,
         {
-            pKF->ReplaceMapPointMatch(mit->second, pMP);
-            pMP->AddObservation(pKF,mit->second);
+            pKF->ReplaceMapPointMatch(mit->second, pMP); // mit->second : 기존 map point와 correspondence의 관계가 있는 keyframe의 keypoint index, pMP : 대체 대상인 map point 
+            pMP->AddObservation(pKF,mit->second); // Data Association -> 대체 대상인 map point가 어느 keyframe에서 발견된 몇 번째 keypoint인지 저장한다.
         }
-        else
+        // 대체 대상인 map point가 기존의 map point가 관측되는 keyframe에서 발견되지 않았다면,
+        else // pMP->IsInKeyFrame(pKF) = true -> 해당 map point가 특정 keyframe에서 발견되었다면,
         {
-            pKF->EraseMapPointMatch(mit->second);
+            pKF->EraseMapPointMatch(mit->second); // 해당 keyframe 상의 idx번째 keypoint와 association 관계를 갖는 map point를 Null 값으로 초기화한다.
         }
     }
-    pMP->IncreaseFound(nfound);
-    pMP->IncreaseVisible(nvisible);
-    pMP->ComputeDistinctiveDescriptors();
+    // Q. 기존의 map point에서 새로운 map point로 대체되었다는 것은, 새로운 map point가 발견되고, tracking을 위해 이용되었다는 것을 의미
+    pMP->IncreaseFound(nfound); // mnFound += 1
+    pMP->IncreaseVisible(nvisible); // mnVisible += 1
+    pMP->ComputeDistinctiveDescriptors(); // 새로운 map point의 representative descriptor(다른 descriptor와의 hamming distance가 가장 작은 descriptor)를 저장한다.
 
-    mpMap->EraseMapPoint(this);
+    mpMap->EraseMapPoint(this); // 전체 map에서 기존의 map point를 삭제
 }
 
 bool MapPoint::isBad()
@@ -343,10 +352,11 @@ cv::Mat MapPoint::GetDescriptor()
 
 int MapPoint::GetIndexInKeyFrame(KeyFrame *pKF)
 {
-    unique_lock<mutex> lock(mMutexFeatures);
-    if(mObservations.count(pKF))
-        return mObservations[pKF];
-    else
+    unique_lock<mutex> lock(mMutexFeatures); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexFeautures를 소유한다.
+    // mObservations -> Keyframes observing the point and associated index in keyframe
+    if(mObservations.count(pKF)) // 해당 map point가 해당 keyframe에서 관측된다면,
+        return mObservations[pKF]; // 해당 map point와 association의 관계를 가지는 keyframe의 keypoint index
+    else // 해당 map point가 해당 keyframe에서 관측되지 않는다면,
         return -1;
 }
 

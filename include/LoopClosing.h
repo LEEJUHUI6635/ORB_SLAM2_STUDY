@@ -68,7 +68,7 @@ public:
     void RunGlobalBundleAdjustment(unsigned long nLoopKF);
 
     bool isRunningGBA(){
-        unique_lock<std::mutex> lock(mMutexGBA);
+        unique_lock<std::mutex> lock(mMutexGBA); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexGBA를 소유한다.
         return mbRunningGBA;
     }
     bool isFinishedGBA(){

@@ -60,8 +60,8 @@ void Map::EraseMapPoint(MapPoint *pMP)
 
 void Map::EraseKeyFrame(KeyFrame *pKF)
 {
-    unique_lock<mutex> lock(mMutexMap);
-    mspKeyFrames.erase(pKF);
+    unique_lock<mutex> lock(mMutexMap); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexMap을 소유한다.
+    mspKeyFrames.erase(pKF); // 전체 map에 포함되는 모든 keyframe set에서 해당 keyframe을 삭제한다.
 
     // TODO: This only erase the pointer.
     // Delete the MapPoint
@@ -75,7 +75,7 @@ void Map::SetReferenceMapPoints(const vector<MapPoint *> &vpMPs)
 
 void Map::InformNewBigChange()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    unique_lock<mutex> lock(mMutexMap); // unique_lock class의 객체인 lock은 mutex 객체인 mMutexMap을 소유한다.
     mnBigChangeIdx++;
 }
 

@@ -167,7 +167,8 @@ bool ORBmatcher::CheckDistEpipolarLine(const cv::KeyPoint &kp1,const cv::KeyPoin
 
     // 점과 선과의 거리^2
     const float dsqr = num*num/den; // dsqr = ((ax+by+c)/root(a^2+b^2))^2
-
+    
+    // neighbor keyframe 상의 epipolar line과 neighbor keyframe 상의 idx2번째 keypoint인 kp2와의 거리가 특정 threshold보다 낮다면,
     return dsqr<3.84*pKF2->mvLevelSigma2[kp2.octave]; // dsqr < 3.84*pKF2->mvLevelSigma2[kp2.octave] -> return true, dsqr >= 3.84*pKF2->mvLevelSigma2[kp2.octave]
 }
 
@@ -332,45 +333,49 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
     return nmatches;
 }
 
+// matcher.SearchByProjection(mpCurrentKF, mScw, mvpLoopMapPoints, mvpCurrentMatchedPoints,10)
 int ORBmatcher::SearchByProjection(KeyFrame* pKF, cv::Mat Scw, const vector<MapPoint*> &vpPoints, vector<MapPoint*> &vpMatched, int th)
 {
     // Get Calibration Parameters for later projection
+    // 현재 keyframe의 intrinsic parameter
     const float &fx = pKF->fx;
     const float &fy = pKF->fy;
     const float &cx = pKF->cx;
     const float &cy = pKF->cy;
 
     // Decompose Scw
-    cv::Mat sRcw = Scw.rowRange(0,3).colRange(0,3);
-    const float scw = sqrt(sRcw.row(0).dot(sRcw.row(0)));
-    cv::Mat Rcw = sRcw/scw;
-    cv::Mat tcw = Scw.rowRange(0,3).col(3)/scw;
-    cv::Mat Ow = -Rcw.t()*tcw;
+    // Scw -> scale을 고려한 현재 keyframe의 world to camera coordinate의 transformation
+    cv::Mat sRcw = Scw.rowRange(0,3).colRange(0,3); // scale을 고려한 world to camera coordinate의 rotation
+    const float scw = sqrt(sRcw.row(0).dot(sRcw.row(0))); // Q. Rcw.row(0) x Rcw.row(0) = 1, scw -> scale
+    cv::Mat Rcw = sRcw/scw; // scale을 고려하지 않은 determinant 값이 1인 world to camera coordinate의 rotation
+    cv::Mat tcw = Scw.rowRange(0,3).col(3)/scw; // scale을 고려하지 않은 world to camera coordinate의 translation
+    cv::Mat Ow = -Rcw.t()*tcw; // camera to world coordinate의 translation
 
     // Set of MapPoints already found in the KeyFrame
-    set<MapPoint*> spAlreadyFound(vpMatched.begin(), vpMatched.end());
-    spAlreadyFound.erase(static_cast<MapPoint*>(NULL));
+    set<MapPoint*> spAlreadyFound(vpMatched.begin(), vpMatched.end()); // mvpCurrentMatchedPoints -> spAlreadyFound
+    spAlreadyFound.erase(static_cast<MapPoint*>(NULL)); // mvpCurrentMatchedPoints에서 NULL 값 삭제
 
     int nmatches=0;
 
     // For each Candidate MapPoint Project and Match
+    // vpPoints = mvpLoopMapPoints -> loop detection keyframe + neighbor keyframes의 map points
     for(int iMP=0, iendMP=vpPoints.size(); iMP<iendMP; iMP++)
     {
         MapPoint* pMP = vpPoints[iMP];
 
         // Discard Bad MapPoints and already found
-        if(pMP->isBad() || spAlreadyFound.count(pMP))
-            continue;
+        if(pMP->isBad() || spAlreadyFound.count(pMP)) // 해당 map point가 나쁘다고 판단하거나, 이미 찾은 correspondence인 경우
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Get 3D Coords.
-        cv::Mat p3Dw = pMP->GetWorldPos();
+        cv::Mat p3Dw = pMP->GetWorldPos(); // 절대 좌표계인 world 좌표계 상의 map point의 position
 
         // Transform into Camera Coords.
-        cv::Mat p3Dc = Rcw*p3Dw+tcw;
+        cv::Mat p3Dc = Rcw*p3Dw+tcw; // 현재 keyframe의 world to camera coordinate의 transformation x world 좌표계 상의 map point의 position = 현재 keyframe 상의 map point의 position
 
         // Depth must be positive
-        if(p3Dc.at<float>(2)<0.0)
-            continue;
+        if(p3Dc.at<float>(2)<0.0) // 현재 keyframe 상의 map point position의 z 값 < 0.0
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Project into Image
         const float invz = 1/p3Dc.at<float>(2);
@@ -381,53 +386,55 @@ int ORBmatcher::SearchByProjection(KeyFrame* pKF, cv::Mat Scw, const vector<MapP
         const float v = fy*y+cy;
 
         // Point must be inside the image
-        if(!pKF->IsInImage(u,v))
-            continue;
+        if(!pKF->IsInImage(u,v)) // pixel 좌표인 x와 y가 image boundary에 있는 경우 return true, image boundary 밖에 있는 경우 return false
+        // pKF->IsInImage(u,v) = false -> map point를 현재 keyframe에 projection 하였을 때, image boundary를 벗어나는 경우
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Depth must be inside the scale invariance region of the point
-        const float maxDistance = pMP->GetMaxDistanceInvariance();
-        const float minDistance = pMP->GetMinDistanceInvariance();
-        cv::Mat PO = p3Dw-Ow;
-        const float dist = cv::norm(PO);
+        const float maxDistance = pMP->GetMaxDistanceInvariance(); // 1.2f*mfMaxDistance
+        const float minDistance = pMP->GetMinDistanceInvariance(); // 0.8f*mfMinDistance
+        cv::Mat PO = p3Dw-Ow; // world 좌표계에서 map point - world 좌표계에서 camera의 위치(camera to world coordinate의 translation)
+        const float dist = cv::norm(PO); // camera 좌표계 원점에서 map point까지의 거리
 
         if(dist<minDistance || dist>maxDistance)
-            continue;
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Viewing angle must be less than 60 deg
-        cv::Mat Pn = pMP->GetNormal();
+        cv::Mat Pn = pMP->GetNormal(); // 해당 map point의 mean viewing direction
 
-        if(PO.dot(Pn)<0.5*dist)
-            continue;
+        if(PO.dot(Pn)<0.5*dist) // 해당 map point의 mean viewing direction과 map point - camera 좌표계의 원점 벡터가 이루는 각도가 60을 초과하면,
+            continue; // 해당 루프의 끝으로 이동한다.
 
         int nPredictedLevel = pMP->PredictScale(dist,pKF);
 
         // Search in a radius
-        const float radius = th*pKF->mvScaleFactors[nPredictedLevel];
+        const float radius = th*pKF->mvScaleFactors[nPredictedLevel]; // search window의 크기
 
-        const vector<size_t> vIndices = pKF->GetFeaturesInArea(u,v,radius);
+        const vector<size_t> vIndices = pKF->GetFeaturesInArea(u,v,radius); // map point를 현재 keyframe에 projection하고, Grid Search를 통해 map point와 가장 유사한 현재 keyframe의 keypoint를 search 한다.
+        // vIndices -> map point와 가장 유사한 현재 keyframe의 keypoint index
 
-        if(vIndices.empty())
-            continue;
+        if(vIndices.empty()) // vIndices.empty() = true
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Match to the most similar keypoint in the radius
-        const cv::Mat dMP = pMP->GetDescriptor();
+        const cv::Mat dMP = pMP->GetDescriptor(); // 해당 map point를 가장 잘 표현할 수 있는 representative descriptor
 
         int bestDist = 256;
         int bestIdx = -1;
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
         {
-            const size_t idx = *vit;
-            if(vpMatched[idx])
-                continue;
+            const size_t idx = *vit; // de-reference -> map point와 가장 유사한 현재 keyframe의 keypoint index
+            if(vpMatched[idx]) // vpMatched[idx] != NULL
+                continue; // 해당 루프의 끝으로 이동한다.
 
-            const int &kpLevel= pKF->mvKeysUn[idx].octave;
+            const int &kpLevel= pKF->mvKeysUn[idx].octave; // 현재 keyframe의 idx번째 keypoint의 scale level
 
             if(kpLevel<nPredictedLevel-1 || kpLevel>nPredictedLevel)
-                continue;
+                continue; // 해당 루프의 끝으로 이동한다.
 
-            const cv::Mat &dKF = pKF->mDescriptors.row(idx);
+            const cv::Mat &dKF = pKF->mDescriptors.row(idx); // 현재 keyframe의 idx번째 keypoint의 descriptor
 
-            const int dist = DescriptorDistance(dMP,dKF);
+            const int dist = DescriptorDistance(dMP,dKF); // 해당 map point를 가장 잘 표현할 수 있는 representative descriptor - 현재 keyframe의 idx번째 keypoint의 descriptor
 
             if(dist<bestDist)
             {
@@ -436,15 +443,15 @@ int ORBmatcher::SearchByProjection(KeyFrame* pKF, cv::Mat Scw, const vector<MapP
             }
         }
 
-        if(bestDist<=TH_LOW)
+        if(bestDist<=TH_LOW) // TH_LOW = 50
         {
-            vpMatched[bestIdx]=pMP;
-            nmatches++;
+            vpMatched[bestIdx]=pMP; // mvpCurrentMatchedPoints[bestIdx] = pMP
+            nmatches++; 
         }
 
     }
 
-    return nmatches;
+    return nmatches; // loop detection keyframe + neighbor keyframes의 map points와 현재 keyframe의 map points와의 새롭게 찾은 correspondence의 개수
 }
 
 int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f> &vbPrevMatched, vector<int> &vnMatches12, int windowSize)
@@ -564,91 +571,99 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
     return nmatches;
 }
 
+// matcher.SearchByBoW(mpCurrentKF,pKF,vvpMapPointMatches[i])
+// mpCurrentKF -> 현재 keyframe
+// pKF -> i번째 loop detection candidate keyframe
 int ORBmatcher::SearchByBoW(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &vpMatches12)
 {
-    const vector<cv::KeyPoint> &vKeysUn1 = pKF1->mvKeysUn;
-    const DBoW2::FeatureVector &vFeatVec1 = pKF1->mFeatVec;
-    const vector<MapPoint*> vpMapPoints1 = pKF1->GetMapPointMatches();
-    const cv::Mat &Descriptors1 = pKF1->mDescriptors;
+    // 현재 keyframe
+    const vector<cv::KeyPoint> &vKeysUn1 = pKF1->mvKeysUn; // 현재 keyframe의 keypoint
+    const DBoW2::FeatureVector &vFeatVec1 = pKF1->mFeatVec; // 현재 keyframe의 feature vector
+    const vector<MapPoint*> vpMapPoints1 = pKF1->GetMapPointMatches(); // 현재 keyframe 상의 keypoint와 association의 관계를 가지는 map point
+    const cv::Mat &Descriptors1 = pKF1->mDescriptors; // 현재 keyframe 상의 keypoint의 descriptor
 
-    const vector<cv::KeyPoint> &vKeysUn2 = pKF2->mvKeysUn;
-    const DBoW2::FeatureVector &vFeatVec2 = pKF2->mFeatVec;
-    const vector<MapPoint*> vpMapPoints2 = pKF2->GetMapPointMatches();
-    const cv::Mat &Descriptors2 = pKF2->mDescriptors;
+    // i번째 loop detection candidate keyframe
+    const vector<cv::KeyPoint> &vKeysUn2 = pKF2->mvKeysUn; // i번째 loop detection candidate keyframe의 keypoint
+    const DBoW2::FeatureVector &vFeatVec2 = pKF2->mFeatVec; // i번째 loop detection candidate keyframe의 feature vector
+    const vector<MapPoint*> vpMapPoints2 = pKF2->GetMapPointMatches(); // i번째 loop detection candidate keyframe 상의 keypoint와 association의 관계를 가지는 map point
+    const cv::Mat &Descriptors2 = pKF2->mDescriptors; // i번째 loop detection candidate keyframe 상의 keypoint의 descriptor
 
-    vpMatches12 = vector<MapPoint*>(vpMapPoints1.size(),static_cast<MapPoint*>(NULL));
-    vector<bool> vbMatched2(vpMapPoints2.size(),false);
+    vpMatches12 = vector<MapPoint*>(vpMapPoints1.size(),static_cast<MapPoint*>(NULL)); // 현재 keyframe의 map point 개수만큼 NULL 값으로 초기화
+    vector<bool> vbMatched2(vpMapPoints2.size(),false); // i번째 loop detection candidate keyframe의 map point 개수만큼 false로 초기화
 
-    vector<int> rotHist[HISTO_LENGTH];
+    vector<int> rotHist[HISTO_LENGTH]; // rotHist[30]
     for(int i=0;i<HISTO_LENGTH;i++)
-        rotHist[i].reserve(500);
+        rotHist[i].reserve(500); // rotHist[30][500]
 
     const float factor = 1.0f/HISTO_LENGTH;
 
     int nmatches = 0;
 
-    DBoW2::FeatureVector::const_iterator f1it = vFeatVec1.begin();
-    DBoW2::FeatureVector::const_iterator f2it = vFeatVec2.begin();
+    // BoW의 두 번째 기능 -> Data Association
+    DBoW2::FeatureVector::const_iterator f1it = vFeatVec1.begin(); // 현재 keyframe의 feature vector에 대한 반복자
+    DBoW2::FeatureVector::const_iterator f2it = vFeatVec2.begin(); // i번째 loop detection candidate keyframe의 feature vector에 대한 반복자
     DBoW2::FeatureVector::const_iterator f1end = vFeatVec1.end();
     DBoW2::FeatureVector::const_iterator f2end = vFeatVec2.end();
 
     while(f1it != f1end && f2it != f2end)
     {
-        if(f1it->first == f2it->first)
+        if(f1it->first == f2it->first) // f1it->first : node id, f2it->first : node id
+        // 현재 keyframe의 vocabulary tree의 node id = i번째 loop detection candidate keyframe의 vocabulary tree의 node id
         {
-            for(size_t i1=0, iend1=f1it->second.size(); i1<iend1; i1++)
+            for(size_t i1=0, iend1=f1it->second.size(); i1<iend1; i1++) // f1it->second : 현재 keyframe의 특정 node id에 속한 keypoint index의 개수만큼 반복
             {
-                const size_t idx1 = f1it->second[i1];
+                const size_t idx1 = f1it->second[i1]; // 현재 keyframe의 특정 node id에 속한 i1번째 keypoint index
 
-                MapPoint* pMP1 = vpMapPoints1[idx1];
-                if(!pMP1)
-                    continue;
-                if(pMP1->isBad())
-                    continue;
+                MapPoint* pMP1 = vpMapPoints1[idx1]; // 현재 keyframe의 idx1번째 map point
+                if(!pMP1) // 해당 map point가 존재하지 않는다면,
+                    continue; // 해당 루프의 끝으로 이동한다.
+                if(pMP1->isBad()) // 해당 map point가 나쁘다고 판단하면,
+                    continue; // 해당 루프의 끝으로 이동한다.
 
-                const cv::Mat &d1 = Descriptors1.row(idx1);
+                const cv::Mat &d1 = Descriptors1.row(idx1); // 현재 keyframe 상의 idx1번째 keypoint의 descriptor
 
                 int bestDist1=256;
                 int bestIdx2 =-1 ;
                 int bestDist2=256;
 
-                for(size_t i2=0, iend2=f2it->second.size(); i2<iend2; i2++)
+                for(size_t i2=0, iend2=f2it->second.size(); i2<iend2; i2++) // f2it->second : i번째 loop detection candidate keyframe의 특정 node id에 속한 keypoint index의 개수만큼 반복
                 {
-                    const size_t idx2 = f2it->second[i2];
+                    const size_t idx2 = f2it->second[i2]; // i번째 loop detection candidate keyframe의 특정 node id에 속한 i2번째 keypoint index
 
-                    MapPoint* pMP2 = vpMapPoints2[idx2];
+                    MapPoint* pMP2 = vpMapPoints2[idx2]; // i번째 loop detection candidate keyframe의 idx2번째 map point
 
-                    if(vbMatched2[idx2] || !pMP2)
-                        continue;
+                    if(vbMatched2[idx2] || !pMP2) // 이미 idx2번째 map point와의 correspondence가 존재하거나(vbMatched2[idx2] = true), 해당 map point가 존재하지 않는다면,
+                        continue; // 해당 루프의 끝으로 이동한다.
 
-                    if(pMP2->isBad())
-                        continue;
+                    if(pMP2->isBad()) // 해당 map point가 나쁘다고 판단하면,
+                        continue; // 해당 루프의 끝으로 이동한다.
 
-                    const cv::Mat &d2 = Descriptors2.row(idx2);
+                    const cv::Mat &d2 = Descriptors2.row(idx2); // i번째 loop detection candidate keyframe 상의 idx2번째 keypoint의 descriptor
 
-                    int dist = DescriptorDistance(d1,d2);
+                    int dist = DescriptorDistance(d1,d2); // 현재 keyframe 상의 idx1번째 keypoint의 descriptor - i번째 loop detection candidate keyframe 상의 idx2번째 keypoint의 descriptor
 
-                    if(dist<bestDist1)
+                    if(dist<bestDist1) // 현재 keyframe의 descriptor와 i번째 loop detection candidate keyframe의 descriptor 간의 가장 작은 거리
                     {
                         bestDist2=bestDist1;
                         bestDist1=dist;
                         bestIdx2=idx2;
                     }
-                    else if(dist<bestDist2)
+                    else if(dist<bestDist2) // 현재 keyframe의 descriptor와 i번째 loop detection candidate keyframe의 descriptor 간의 두 번째로 작은 거리
                     {
                         bestDist2=dist;
                     }
                 }
 
-                if(bestDist1<TH_LOW)
+                if(bestDist1<TH_LOW) // TH_LOW = 50
                 {
-                    if(static_cast<float>(bestDist1)<mfNNratio*static_cast<float>(bestDist2))
+                    if(static_cast<float>(bestDist1)<mfNNratio*static_cast<float>(bestDist2)) // 가장 작은 거리는 두 번째로 작은 거리와 꽤 큰 차이를 보여야 한다.
                     {
-                        vpMatches12[idx1]=vpMapPoints2[bestIdx2];
+                        vpMatches12[idx1]=vpMapPoints2[bestIdx2]; // 현재 keyframe의 idx1번째 map point - i번째 loop detection candidate keyframe의 bestIdx2번째 map point correspondences
                         vbMatched2[bestIdx2]=true;
 
-                        if(mbCheckOrientation)
+                        if(mbCheckOrientation) // mbCheckOrientation
                         {
+                            // rotation histogram 만들기
                             float rot = vKeysUn1[idx1].angle-vKeysUn2[bestIdx2].angle;
                             if(rot<0.0)
                                 rot+=360.0f;
@@ -666,17 +681,17 @@ int ORBmatcher::SearchByBoW(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
             f1it++;
             f2it++;
         }
-        else if(f1it->first < f2it->first)
+        else if(f1it->first < f2it->first) // 현재 keyframe의 node id < i번째 loop candidate keyframe의 node id
         {
-            f1it = vFeatVec1.lower_bound(f2it->first);
+            f1it = vFeatVec1.lower_bound(f2it->first); // i번째 loop candidate keyframe의 node id를 하한선으로 잡고, 그 아래의 node를 search한다.
         }
-        else
+        else // i번째 loop candidate keyframe의 node id < 현재 keyframe의 node id
         {
-            f2it = vFeatVec2.lower_bound(f1it->first);
+            f2it = vFeatVec2.lower_bound(f1it->first); // 현재 keyframe의 node id를 하한선으로 잡고, 그 아래의 node를 search한다.
         }
     }
 
-    if(mbCheckOrientation)
+    if(mbCheckOrientation) // mbCheckOrientation = true
     {
         int ind1=-1;
         int ind2=-1;
@@ -691,14 +706,15 @@ int ORBmatcher::SearchByBoW(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
             for(size_t j=0, jend=rotHist[i].size(); j<jend; j++)
             {
                 vpMatches12[rotHist[i][j]]=static_cast<MapPoint*>(NULL);
-                nmatches--;
+                nmatches--; // rotation consistency를 만족하지 않는 correspondence 삭제
             }
         }
     }
 
-    return nmatches;
+    return nmatches; // 현재 keyframe의 idx1번째 map point - i번째 loop detection candidate keyframe의 bestIdx2번째 map point correspondences
 }
 
+// Data association -> 현재 keyframe의 i번째 keypoint index, 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
 // SearchForTriangulation(mpCurrentKeyFrame,pKF2,F12,vMatchedIndices,false)
 int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F12,
                                        vector<pair<size_t, size_t> > &vMatchedPairs, const bool bOnlyStereo)
@@ -707,12 +723,13 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
     const DBoW2::FeatureVector &vFeatVec2 = pKF2->mFeatVec; // keyframe 2의 feature vector
 
     //Compute epipole in second image
-    cv::Mat Cw = pKF1->GetCameraCenter(); // world 좌표계 상에서의 keyframe 1(현재 keyframe)의 위치
+    cv::Mat Cw = pKF1->GetCameraCenter(); // world 좌표계 상에서의 keyframe 1(현재 keyframe)의 위치, keyframe 1의 camera to world coordinate의 translation
     cv::Mat R2w = pKF2->GetRotation(); // keyframe 2(neighbor keyframe)의 world to camera coordinate의 rotation
     cv::Mat t2w = pKF2->GetTranslation(); // keyframe 2(neighbor keyframe)의 world to camera coordinate의 translation
-    cv::Mat C2 = R2w*Cw+t2w; // keyframe 2(neighbor keyframe) 상의 keyframe 1(현재 keyframe)의 위치
+    cv::Mat C2 = R2w*Cw+t2w; // keyframe 1의 camera to keyframe 2의 camera coordinate의 translation
+    // keyframe 2의 world to camera cooridnate x keyframe 1의 camera to world coordinate의 translation = keyframe 2(neighbor keyframe) 상의 keyframe 1(현재 keyframe)의 위치
 
-    // pixel 좌표계
+    // pixel 좌표계 -> world 좌표계 상의 keyframe 1의 camera 좌표계 위치를 keyframe 2의 pixel 좌표계로 투영
     const float invz = 1.0f/C2.at<float>(2);
     const float ex =pKF2->fx*C2.at<float>(0)*invz+pKF2->cx;
     const float ey =pKF2->fy*C2.at<float>(1)*invz+pKF2->cy; 
@@ -732,7 +749,7 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
     const float factor = 1.0f/HISTO_LENGTH;
 
     DBoW2::FeatureVector::const_iterator f1it = vFeatVec1.begin(); // keyframe 1(현재 keyframe)의 feature vector의 반복자
-    DBoW2::FeatureVector::const_iterator f2it = vFeatVec2.begin(); // keyframe 2(neighbor keyframe)의 featuer vector의 반복자
+    DBoW2::FeatureVector::const_iterator f2it = vFeatVec2.begin(); // keyframe 2(neighbor keyframe)의 feature vector의 반복자
     DBoW2::FeatureVector::const_iterator f1end = vFeatVec1.end();
     DBoW2::FeatureVector::const_iterator f2end = vFeatVec2.end();
 
@@ -749,6 +766,7 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
                 MapPoint* pMP1 = pKF1->GetMapPoint(idx1); // 현재 keyframe 상의 idx1번째 keypoint와 association의 관계를 가지는 map point
                 
                 // If there is already a MapPoint skip
+                // 해당 과정은 현재 keyframe과 neighbor keyframe의 keypoint association 관계를 통해 map point를 형성하는 것인데, 이미 map point가 존재한다면 이를 통해 더 이상 map point를 만들 수 없기 때문
                 if(pMP1) // pMP1이 존재한다면,
                     continue; // 해당 루프의 끝으로 이동한다.
 
@@ -775,11 +793,13 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
                     MapPoint* pMP2 = pKF2->GetMapPoint(idx2); // neighbor keyframe 상의 idx2번째 keypoint와 association 관계를 가지는 map point
                     
                     // If we have already matched or there is a MapPoint skip
+                    // keyframe 2의 idx2번째 keypoint에 해당하는 keyframe 1의 keypoint가 존재하거나, 해당 keypoint로 형성된 map point가 이미 존재한다면,
                     if(vbMatched2[idx2] || pMP2) // vbMatched2[idx2] = true or pMP2 != NULL
                         continue; // 해당 루프의 끝으로 이동한다.
 
                     const bool bStereo2 = pKF2->mvuRight[idx2]>=0; // pKF2->mvuRight[idx2] >= 0 -> bStereo2 = true
 
+                    // bOnlyStereo = false
                     if(bOnlyStereo) // bOnlyStereo = true
                         if(!bStereo2) // bStereo2 = false
                             continue; // 해당 루프의 끝으로 이동한다.
@@ -803,6 +823,7 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
                     }
                     // kp1, kp2 -> kp1은 현재 keyframe 상의 idx1번째 keypoint, kp2는 neighbor keyframe 상의 idx2번째 keypoint
                     // 현재 keyframe 상의 idx1번째 keypoint kp1에 fundamental matrix를 곱하여 얻은 neighbor keyframe 상의 epipolar line과 neighbor keyframe 상의 idx2번째 keypoint와의 거리
+                    // neighbor keyframe 상의 epipolar line과 neighbor keyframe 상의 idx2번째 keypoint인 kp2와의 거리가 특정 threshold보다 낮다면,
                     if(CheckDistEpipolarLine(kp1,kp2,F12,pKF2)) // CheckDistEpipolarLine(kp1,kp2,F12,pKF2) = true
                     {
                         bestIdx2 = idx2;
@@ -810,11 +831,11 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
                     }
                 }
                 
-                if(bestIdx2>=0)
+                if(bestIdx2>=0) // bestIdx2가 존재한다면,
                 {
                     const cv::KeyPoint &kp2 = pKF2->mvKeysUn[bestIdx2]; // 현재 keyframe 상의 idx1번째 keypoint에 가장 유사한 neighbor keyframe 상의 keypoint
                     vMatches12[idx1]=bestIdx2; // 현재 keyframe 상의 idx1번째 keypoint에 가장 유사한 neighbor keyframe 상의 keypoint index
-                    nmatches++;
+                    nmatches++; // 현재 keyframe 상의 idx1번째 keypoint에 가장 유사한 neighbor keyframe 상의 keypoint의 개수
 
                     // rotation histogram을 만드는 과정
                     if(mbCheckOrientation) // mbCheckOrientation = true
@@ -868,124 +889,132 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
 
     }
 
+    // vector<pair<size_t, size_t> > &vMatchedPairs
     vMatchedPairs.clear();
-    vMatchedPairs.reserve(nmatches);
+    vMatchedPairs.reserve(nmatches); // nmatches의 개수만큼 vector에 메모리 할당
 
     for(size_t i=0, iend=vMatches12.size(); i<iend; i++)
     {
         if(vMatches12[i]<0) // rotation consistency 조건을 만족하지 않은 경우 -> vMatches12[rotHist[i][j]] = -1
             continue; // 해당 루프의 끝으로 이동한다.
-        vMatchedPairs.push_back(make_pair(i,vMatches12[i])); 
+        vMatchedPairs.push_back(make_pair(i,vMatches12[i]));
         // i -> 현재 keyframe의 keypoint index, vMatches12[i] -> 현재 keyframe의 i번째 keypoint와 대응되는 neighbor keyframe의 keypoint index
     }
 
     return nmatches; // neighbor keyframe과 대응되는 현재 keyframe의 keypoint 개수
 }
 
+// matcher.Fuse(pKFi,vpMapPointMatches) -> pKFi : neighbor keyframe, vpMapPointMatches : 현재 keyframe 상의 keypoint와 association의 관계를 가지는 map point
 int ORBmatcher::Fuse(KeyFrame *pKF, const vector<MapPoint *> &vpMapPoints, const float th)
 {
-    cv::Mat Rcw = pKF->GetRotation();
-    cv::Mat tcw = pKF->GetTranslation();
+    cv::Mat Rcw = pKF->GetRotation(); // neighbor keyframe의 world to camera coordinate의 rotation
+    cv::Mat tcw = pKF->GetTranslation(); // neighbor keyframe의 world to camera coordinate의 translation
 
+    // neighbor keyframe의 intrinsic parameter
     const float &fx = pKF->fx;
     const float &fy = pKF->fy;
     const float &cx = pKF->cx;
     const float &cy = pKF->cy;
     const float &bf = pKF->mbf;
 
-    cv::Mat Ow = pKF->GetCameraCenter();
+    cv::Mat Ow = pKF->GetCameraCenter(); // world 좌표계 상에서의 camera의 위치, camera to world coordinate의 translation
 
     int nFused=0;
 
-    const int nMPs = vpMapPoints.size();
+    const int nMPs = vpMapPoints.size(); // 현재 keyframe 상의 keypoint 개수
 
-    for(int i=0; i<nMPs; i++)
+    // 현재 keyframe의 map point와 neighbor keyframe의 keypoint와의 correspondence를 찾는 과정
+    for(int i=0; i<nMPs; i++) // 현재 keyframe 상의 keypoint 개수만큼 반복
     {
-        MapPoint* pMP = vpMapPoints[i];
+        MapPoint* pMP = vpMapPoints[i]; // 현재 keyframe 상의 i번째 keypoint에 해당하는 map point
 
-        if(!pMP)
-            continue;
+        if(!pMP) // 해당 map point가 존재하지 않는다면,
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        if(pMP->isBad() || pMP->IsInKeyFrame(pKF))
-            continue;
+        if(pMP->isBad() || pMP->IsInKeyFrame(pKF)) // 해당 map point가 나쁘다고 판단하거나, 해당 map point가 neighbor keyframe에서 발견되었다면(이미 생성된 map point이기 때문),
+        // pMP->IsInKeyFrame(pKF) : 해당 map point가 특정 keyframe에서 발견되었다면 true, 발견되지 않았다면 false
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        cv::Mat p3Dw = pMP->GetWorldPos();
-        cv::Mat p3Dc = Rcw*p3Dw + tcw;
+        // 현재 keyframe 상의 keypoint와 association 관계를 가지는 map point를 neighbor keyframe으로 projection
+        cv::Mat p3Dw = pMP->GetWorldPos(); // world 좌표계 상의 map point의 position
+        cv::Mat p3Dc = Rcw*p3Dw + tcw; // world to camera coordinate x world 좌표계 상의 map point의 position = camera 좌표계 상의 map point의 position
 
         // Depth must be positive
-        if(p3Dc.at<float>(2)<0.0f)
-            continue;
+        if(p3Dc.at<float>(2)<0.0f) // camera 좌표계 상의 map point의 z값 < 0 
+            continue; // 해당 루프의 끝으로 이동한다.
 
         const float invz = 1/p3Dc.at<float>(2);
-        const float x = p3Dc.at<float>(0)*invz;
-        const float y = p3Dc.at<float>(1)*invz;
+        const float x = p3Dc.at<float>(0)*invz; // normalized plane 상의 metric 좌표
+        const float y = p3Dc.at<float>(1)*invz; // normalized plane 상의 metric 좌표
 
-        const float u = fx*x+cx;
-        const float v = fy*y+cy;
+        const float u = fx*x+cx; // metric 좌표계 -> pixel 좌표계
+        const float v = fy*y+cy; // metric 좌표계 -> pixel 좌표계
 
         // Point must be inside the image
-        if(!pKF->IsInImage(u,v))
-            continue;
+        if(!pKF->IsInImage(u,v)) // pixel 좌표인 x와 y가 image boundary에 있는 경우 return true, image boundary 밖에 있는 경우 return false
+        // pKF->IsInImage(u,v) = false
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        const float ur = u-bf*invz;
+        const float ur = u-bf*invz; // right image
 
-        const float maxDistance = pMP->GetMaxDistanceInvariance();
-        const float minDistance = pMP->GetMinDistanceInvariance();
-        cv::Mat PO = p3Dw-Ow;
+        const float maxDistance = pMP->GetMaxDistanceInvariance(); // 1.2f*mfMaxDistance
+        const float minDistance = pMP->GetMinDistanceInvariance(); // 0.8f*mfMinDistance
+        cv::Mat PO = p3Dw-Ow; // world 좌표계 상의 map point의 position - world 좌표계 상의 neighbor keyframe의 position
         const float dist3D = cv::norm(PO);
 
         // Depth must be inside the scale pyramid of the image
-        if(dist3D<minDistance || dist3D>maxDistance )
-            continue;
+        if(dist3D<minDistance || dist3D>maxDistance ) // (map point - neighbor keyframe < 해당 map point가 가질 수 있는 가장 작은 distance) or (map point - neighbor keyframe > 해당 map point가 가질 수 있는 가장 큰 distance)
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Viewing angle must be less than 60 deg
-        cv::Mat Pn = pMP->GetNormal();
+        cv::Mat Pn = pMP->GetNormal(); // 해당 map point의 mean viewing direction
 
-        if(PO.dot(Pn)<0.5*dist3D)
-            continue;
+        if(PO.dot(Pn)<0.5*dist3D) // (map point - neighbor keyframe) - map point의 mean viewing direction > 60
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        int nPredictedLevel = pMP->PredictScale(dist3D,pKF);
+        int nPredictedLevel = pMP->PredictScale(dist3D,pKF); // Q. 
 
         // Search in a radius
-        const float radius = th*pKF->mvScaleFactors[nPredictedLevel];
+        const float radius = th*pKF->mvScaleFactors[nPredictedLevel]; // search window의 size 결정
 
-        const vector<size_t> vIndices = pKF->GetFeaturesInArea(u,v,radius);
+        const vector<size_t> vIndices = pKF->GetFeaturesInArea(u,v,radius); // Grid Search를 통해 현재 keyframe의 keypoint와 유사한 neighbor keyframe 상의 keypoint를 찾는다.
 
-        if(vIndices.empty())
-            continue;
+        if(vIndices.empty()) // vIndices.empty() = true
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Match to the most similar keypoint in the radius
 
-        const cv::Mat dMP = pMP->GetDescriptor();
+        // 현재 keyframe 상의 i번째 keypoint에 해당하는 map point의 descriptor
+        const cv::Mat dMP = pMP->GetDescriptor(); // 하나의 map point가 관측되는 keyframe의 keypoint descriptor, 하나의 map point를 가장 잘 표현할 수 있는 representative descriptor
 
         int bestDist = 256;
         int bestIdx = -1;
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
         {
-            const size_t idx = *vit;
+            const size_t idx = *vit; // de-reference -> 현재 keyframe의 keypoint와 유사한 neighbor keyframe 상의 keypoint index
 
-            const cv::KeyPoint &kp = pKF->mvKeysUn[idx];
+            const cv::KeyPoint &kp = pKF->mvKeysUn[idx]; // 현재 keyframe의 keypoint와 유사한 neighbor keyframe 상의 keypoint
 
             const int &kpLevel= kp.octave;
 
             if(kpLevel<nPredictedLevel-1 || kpLevel>nPredictedLevel)
-                continue;
+                continue; // 해당 루프의 끝으로 이동한다.
 
-            if(pKF->mvuRight[idx]>=0)
+            if(pKF->mvuRight[idx]>=0) // stereo
             {
                 // Check reprojection error in stereo
-                const float &kpx = kp.pt.x;
-                const float &kpy = kp.pt.y;
-                const float &kpr = pKF->mvuRight[idx];
-                const float ex = u-kpx;
-                const float ey = v-kpy;
-                const float er = ur-kpr;
-                const float e2 = ex*ex+ey*ey+er*er;
+                const float &kpx = kp.pt.x; // 현재 keyframe의 keypoint와 유사한 neighbor keyframe 상의 keypoint의 x 좌표 (pixel 좌표계)
+                const float &kpy = kp.pt.y; // 현재 keyframe의 keypoint와 유사한 neighbor keyframe 상의 keypoint의 y 좌표 (pixel 좌표계)
+                const float &kpr = pKF->mvuRight[idx]; 
+                const float ex = u-kpx; // 현재 keyframe의 keypoint를 neighbor keyframe 상에 projection한 x 좌표 - Grid Search를 통해 찾은 neighbor keyframe 상의 keypoint의 x 좌표
+                const float ey = v-kpy; // 현재 keyframe의 keypoint를 neighbor keyframe 상에 projection한 y 좌표 - Grid Search를 통해 찾은 neighbor keyframe 상의 keypoint의 y 좌표
+                const float er = ur-kpr; // right image
+                const float e2 = ex*ex+ey*ey+er*er; // reprojection error
 
                 if(e2*pKF->mvInvLevelSigma2[kpLevel]>7.8)
-                    continue;
+                    continue; // 해당 루프의 끝으로 이동한다.
             }
-            else
+            else // Q. monocular
             {
                 const float &kpx = kp.pt.x;
                 const float &kpy = kp.pt.y;
@@ -997,9 +1026,9 @@ int ORBmatcher::Fuse(KeyFrame *pKF, const vector<MapPoint *> &vpMapPoints, const
                     continue;
             }
 
-            const cv::Mat &dKF = pKF->mDescriptors.row(idx);
+            const cv::Mat &dKF = pKF->mDescriptors.row(idx); // neighbor keyframe의 idx번째 keypoint의 descriptor
 
-            const int dist = DescriptorDistance(dMP,dKF);
+            const int dist = DescriptorDistance(dMP,dKF); // 현재 keyframe이 생성한 map point의 descriptor와 neighbor keyframe의 idx번째 keypoint의 descirptor와의 distance
 
             if(dist<bestDist)
             {
@@ -1009,127 +1038,138 @@ int ORBmatcher::Fuse(KeyFrame *pKF, const vector<MapPoint *> &vpMapPoints, const
         }
 
         // If there is already a MapPoint replace otherwise add new measurement
-        if(bestDist<=TH_LOW)
+        if(bestDist<=TH_LOW) // TH_LOW = 50
         {
-            MapPoint* pMPinKF = pKF->GetMapPoint(bestIdx);
-            if(pMPinKF)
+            // 현재 keyframe의 bestIdx번째 map point와 가장 correspondence 관계가 높은 neighbor keyframe의 keypoint와 일치하는 neighbor keyframe의 map point
+            MapPoint* pMPinKF = pKF->GetMapPoint(bestIdx); // neighbor keyframe 상의 bestIdx번째 keypoint와 association의 관계를 가지는 map point
+            if(pMPinKF) // pMPinKF != NULL, -> neighbor keyframe의 bestIdx번째 keypoint와 일치하는 map point가 이미 존재한다면, Fusion 수행
             {
-                if(!pMPinKF->isBad())
+                if(!pMPinKF->isBad()) // 해당 map point가 나쁘다고 판단하지 않는다면,
                 {
-                    if(pMPinKF->Observations()>pMP->Observations())
-                        pMP->Replace(pMPinKF);
-                    else
-                        pMPinKF->Replace(pMP);
+                    if(pMPinKF->Observations()>pMP->Observations()) // bestIdx번째 map point와 일치하는 keyframe의 keypoint 개수 > 현재 keyframe의 map point와 일치하는 keyframe의 keypoint 개수
+                        pMP->Replace(pMPinKF); // 새롭게 생성한 map point를 neighbor keyframe에서 이미 존재하는 map point로 대체
+                    else // pMPinKF->Observations() <= pMP->Observations()
+                        pMPinKF->Replace(pMP); // neighbor keyframe에서 이미 존재하는 map point를 새롭게 생성한 map point로 대체
                 }
             }
-            else
+            else // pMPinKF = NULL -> neighbor keyframe의 bestIdx번째 keypoint와 일치하는 map point가 존재하지 않는다면, 새롭게 생성한 map point에 대한 processing
             {
-                pMP->AddObservation(pKF,bestIdx);
-                pKF->AddMapPoint(pMP,bestIdx);
+                pMP->AddObservation(pKF,bestIdx); // Data Association -> 해당 map point가 neighbor keyframe에서 발견된 bestIdx번째 keypoint임을 저장한다.
+                pKF->AddMapPoint(pMP,bestIdx); // 해당 map point를 neighbor keyframe의 mvpMapPoints vector에 귀속시킨다.
             }
-            nFused++;
+            nFused++; // 새롭게 생성한 map point와 neighbor keyframe에 이미 존재하는 map point와의 Fusion + neighbor keyframe에 존재하지 않으면서도, Grid Search를 통해 찾은 현재 keyframe의 map point와의 correspondence
         }
     }
 
     return nFused;
 }
 
+// 현재 keyframe의 map point와 겹치는 loop detection keyframe의 map point를 구하는 과정
+// matcher.Fuse(pKF,cvScw,mvpLoopMapPoints,4,vpReplacePoints)
+// pKF -> 현재 keyframe 또는 현재 keyframe의 neighbor keyframe
+// cvScw -> 현재 keyframe 또는 현재 keyframe의 neighbor keyframe의 보정된 world to camera coordinate의 pose
+// mvpLoopMapPoints -> loop detection keyframe과 neighbor keyframe들의 map point들
 int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoints, float th, vector<MapPoint *> &vpReplacePoint)
 {
     // Get Calibration Parameters for later projection
+    // 현재 keyframe 또는 현재 keyframe의 neighbor keyframe의 intrinsic parameter
     const float &fx = pKF->fx;
     const float &fy = pKF->fy;
     const float &cx = pKF->cx;
     const float &cy = pKF->cy;
 
     // Decompose Scw
-    cv::Mat sRcw = Scw.rowRange(0,3).colRange(0,3);
-    const float scw = sqrt(sRcw.row(0).dot(sRcw.row(0)));
-    cv::Mat Rcw = sRcw/scw;
-    cv::Mat tcw = Scw.rowRange(0,3).col(3)/scw;
-    cv::Mat Ow = -Rcw.t()*tcw;
+    cv::Mat sRcw = Scw.rowRange(0,3).colRange(0,3); // 보정된 world to camera coordinate의 rotation -> determinant(sRcw) = scale
+    const float scw = sqrt(sRcw.row(0).dot(sRcw.row(0))); // scale
+    cv::Mat Rcw = sRcw/scw; // 보정된 world to camera coordinate의 rotation -> determinant(Rcw) = 1
+    cv::Mat tcw = Scw.rowRange(0,3).col(3)/scw; // 보정된 world to camera coordinate의 translation
+    cv::Mat Ow = -Rcw.t()*tcw; // 보정된 camera to world coordinate의 translation
 
     // Set of MapPoints already found in the KeyFrame
-    const set<MapPoint*> spAlreadyFound = pKF->GetMapPoints();
+    const set<MapPoint*> spAlreadyFound = pKF->GetMapPoints(); // mvpMapPoints -> 해당하는 keyframe 상의 keypoint와 association 관계가 있는 모든 map point -> Q. 보정된 map points?
 
     int nFused=0;
 
-    const int nPoints = vpPoints.size();
+    const int nPoints = vpPoints.size(); // loop detection keyframe과 neighbor keyframe들의 map point들의 개수
 
     // For each candidate MapPoint project and match
-    for(int iMP=0; iMP<nPoints; iMP++)
+    for(int iMP=0; iMP<nPoints; iMP++) // loop detection keyframe과 neighbor keyframe들의 map point들의 개수만큼 반복
     {
-        MapPoint* pMP = vpPoints[iMP];
+        MapPoint* pMP = vpPoints[iMP]; // loop detection keyframe과 neighbor keyframe들의 iMP번째 map point
 
         // Discard Bad MapPoints and already found
-        if(pMP->isBad() || spAlreadyFound.count(pMP))
-            continue;
+        if(pMP->isBad() || spAlreadyFound.count(pMP)) // 해당하는 map point가 나쁘다고 판단하거나, 이미 찾은 correspondence라면,
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Get 3D Coords.
-        cv::Mat p3Dw = pMP->GetWorldPos();
+        cv::Mat p3Dw = pMP->GetWorldPos(); // 절대 좌표계인 world 좌표계 상의 map point의 position
 
         // Transform into Camera Coords.
-        cv::Mat p3Dc = Rcw*p3Dw+tcw;
+        cv::Mat p3Dc = Rcw*p3Dw+tcw; // 보정된 world to camera coordinate의 rotation x world 좌표계 상의 map point의 position = camera 좌표계 상의 map point의 position
 
         // Depth must be positive
-        if(p3Dc.at<float>(2)<0.0f)
-            continue;
+        if(p3Dc.at<float>(2)<0.0f) // camera 좌표계 상의 map point의 position의 z 값 < 0.0
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Project into Image
         const float invz = 1.0/p3Dc.at<float>(2);
         const float x = p3Dc.at<float>(0)*invz;
         const float y = p3Dc.at<float>(1)*invz;
 
+        // loop detection keyframe과 neighbor keyframe의 map points를 현재 keyframe과 neighbor keyframe에 projection
         const float u = fx*x+cx;
         const float v = fy*y+cy;
 
         // Point must be inside the image
-        if(!pKF->IsInImage(u,v))
-            continue;
+        if(!pKF->IsInImage(u,v)) // pixel 좌표인 x와 y가 image boundary에 있는 경우 return true, image boundary 밖에 있는 경우 return false
+        // pKF->IsInImage(u,v) = false -> loop detection keyframe과 neighbor keyframe의 map points를 현재 keyframe과 neighbor keyframe에 projection한 좌표가 image boundary를 벗어나는 경우
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Depth must be inside the scale pyramid of the image
-        const float maxDistance = pMP->GetMaxDistanceInvariance();
-        const float minDistance = pMP->GetMinDistanceInvariance();
-        cv::Mat PO = p3Dw-Ow;
+        const float maxDistance = pMP->GetMaxDistanceInvariance(); // 1.2f*mfMaxDistance
+        const float minDistance = pMP->GetMinDistanceInvariance(); // 0.8f*mfMinDistance
+        cv::Mat PO = p3Dw-Ow; // world 좌표계 상의 map point의 position - world 좌표계 상의 keyframe의 position(보정된 camera to world coordinate의 translation)
         const float dist3D = cv::norm(PO);
 
         if(dist3D<minDistance || dist3D>maxDistance)
-            continue;
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Viewing angle must be less than 60 deg
-        cv::Mat Pn = pMP->GetNormal();
+        cv::Mat Pn = pMP->GetNormal(); // 해당 map point의 mean viewing direction
 
-        if(PO.dot(Pn)<0.5*dist3D)
-            continue;
+        if(PO.dot(Pn)<0.5*dist3D) // 해당 map point의 mean viewing direction과 map point - keyframe 벡터가 이루는 각도가 60도를 초과하면,
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Compute predicted scale level
         const int nPredictedLevel = pMP->PredictScale(dist3D,pKF);
 
         // Search in a radius
-        const float radius = th*pKF->mvScaleFactors[nPredictedLevel];
+        const float radius = th*pKF->mvScaleFactors[nPredictedLevel]; // search window의 크기
 
         const vector<size_t> vIndices = pKF->GetFeaturesInArea(u,v,radius);
+        // loop detection keyframe(neighbor keyframe)을 현재 keyframe(neighbor keyframe)에 투영하여 loop detection keyframe과 현재 keyframe의 map point correspondence를 찾는다.
+        // vIndices -> loop detection keyframe의 map point와 대응되는 현재 keyframe의 keypoint index
 
-        if(vIndices.empty())
-            continue;
+        if(vIndices.empty()) // vIndices.empty() = true
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Match to the most similar keypoint in the radius
 
-        const cv::Mat dMP = pMP->GetDescriptor();
+        const cv::Mat dMP = pMP->GetDescriptor(); // 해당 map point를 가장 잘 표현할 수 있는 representative descriptor
 
         int bestDist = INT_MAX;
         int bestIdx = -1;
         for(vector<size_t>::const_iterator vit=vIndices.begin(); vit!=vIndices.end(); vit++)
         {
-            const size_t idx = *vit;
+            const size_t idx = *vit; // de-reference -> loop detection keyframe의 map point와 대응되는 현재 keyframe의 keypoint index
             const int &kpLevel = pKF->mvKeysUn[idx].octave;
 
             if(kpLevel<nPredictedLevel-1 || kpLevel>nPredictedLevel)
-                continue;
+                continue; // 해당 루프의 끝으로 이동한다.
 
-            const cv::Mat &dKF = pKF->mDescriptors.row(idx);
+            const cv::Mat &dKF = pKF->mDescriptors.row(idx); // 현재 keyframe의 idx번째 keypoint의 descriptor
 
-            int dist = DescriptorDistance(dMP,dKF);
+            int dist = DescriptorDistance(dMP,dKF); // 현재 keyframe의 idx번째 keypoint의 descriptor - loop detection keyframe의 map point의 representative descriptor
 
             if(dist<bestDist)
             {
@@ -1139,89 +1179,102 @@ int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoi
         }
 
         // If there is already a MapPoint replace otherwise add new measurement
-        if(bestDist<=TH_LOW)
+        if(bestDist<=TH_LOW) // TH_LOW = 50
         {
-            MapPoint* pMPinKF = pKF->GetMapPoint(bestIdx);
-            if(pMPinKF)
+            // bestIdx -> 현재 keyframe에 projection된 loop detection keyframe의 map point와 가장 유사한 현재 keyframe의 keypoint index
+            MapPoint* pMPinKF = pKF->GetMapPoint(bestIdx); // 현재 keyframe 상의 bestIdx번째 keypoint와 association의 관계를 가지는 map point
+            if(pMPinKF) // 현재 keyframe 상의 bestIdx번째 keypoint에 해당하는 map point가 존재한다면,
             {
-                if(!pMPinKF->isBad())
-                    vpReplacePoint[iMP] = pMPinKF;
+                if(!pMPinKF->isBad()) // 해당 map point가 나쁘다고 판단하지 않으면,
+                    vpReplacePoint[iMP] = pMPinKF; // Grid Search를 통해 찾은 loop detection keyframe과의 correspondence로 대체한다.
+                    // vpReplacePoint->first : loop detection의 map point index, 
+                    // vpReplacePoint->second : loop detection keyframe과 correspondence의 관계를 갖는 현재 keyframe의 map point
             }
-            else
+            else // 현재 keyframe 상의 bestIdx번째 keypoint에 해당하는 map point가 존재하지 않는다면,
             {
-                pMP->AddObservation(pKF,bestIdx);
-                pKF->AddMapPoint(pMP,bestIdx);
+                // loop detection keyframe의 map point에 대한 처리
+                pMP->AddObservation(pKF,bestIdx); // Data Association -> loop detection keyframe의 map point가 현재 keyframe에서 발견된 bestIdx번째 keypoint임을 저장한다.
+                pKF->AddMapPoint(pMP,bestIdx); // loop detection keyframe의 map point를 현재 keyframe의 mvpMapPoints vector에 귀속시킨다.
             }
-            nFused++;
+            nFused++; // loop detection keyframe의 map point들을 현재 keyframe에 projection 하여 찾은 loop detection keyframe과 현재 keyframe의 map point correspondence의 개수
         }
     }
 
     return nFused;
 }
 
+// matcher.SearchBySim3(mpCurrentKF,pKF,vpMapPointMatches,s,R,t,7.5)
+// s, R, t -> loop detection candidate keyframe to current keyframe coordinate의 similarity transformation
+// vpMatches12 -> 현재 keyframe의 map point - i번째 loop detection candidate keyframe의 map point correspondences
+// Sim3Solver를 통해 projection하여, 현재 keyframe의 map point와 loop detection candidate keyframe의 map point와의 더 많은 correspondence를 새롭게 찾는다.
 int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &vpMatches12,
                              const float &s12, const cv::Mat &R12, const cv::Mat &t12, const float th)
 {
+    // 현재 keyframe의 intrinsic parameter
     const float &fx = pKF1->fx;
     const float &fy = pKF1->fy;
     const float &cx = pKF1->cx;
     const float &cy = pKF1->cy;
 
     // Camera 1 from world
-    cv::Mat R1w = pKF1->GetRotation();
-    cv::Mat t1w = pKF1->GetTranslation();
+    cv::Mat R1w = pKF1->GetRotation(); // 현재 keyframe의 world to camera coordinate의 rotation
+    cv::Mat t1w = pKF1->GetTranslation(); // 현재 keyframe의 world to camera coordinate의 translation
 
     //Camera 2 from world
-    cv::Mat R2w = pKF2->GetRotation();
-    cv::Mat t2w = pKF2->GetTranslation();
+    cv::Mat R2w = pKF2->GetRotation(); // i번째 loop detection candidate keyframe의 world to camera coordinate의 rotation
+    cv::Mat t2w = pKF2->GetTranslation(); // i번째 loop detection candidate keyframe의 world to camera coordinate의 translation
 
     //Transformation between cameras
-    cv::Mat sR12 = s12*R12;
-    cv::Mat sR21 = (1.0/s12)*R12.t();
-    cv::Mat t21 = -sR21*t12;
+    cv::Mat sR12 = s12*R12; // loop detection candidate keyframe to current keyframe coordinate의 similarity를 고려한 rotation
+    cv::Mat sR21 = (1.0/s12)*R12.t(); // current keyframe to loop detection candidate keyframe의 similarity를 고려한 rotation
+    cv::Mat t21 = -sR21*t12; // current keyframe to loop detection candidate keyframe의 similarity를 고려한 translation
 
-    const vector<MapPoint*> vpMapPoints1 = pKF1->GetMapPointMatches();
-    const int N1 = vpMapPoints1.size();
+    const vector<MapPoint*> vpMapPoints1 = pKF1->GetMapPointMatches(); // 현재 keyframe 상의 keypoint와 association의 관계를 가지는 map point
+    const int N1 = vpMapPoints1.size(); // 현재 keyframe의 keypoint 개수
 
-    const vector<MapPoint*> vpMapPoints2 = pKF2->GetMapPointMatches();
-    const int N2 = vpMapPoints2.size();
+    const vector<MapPoint*> vpMapPoints2 = pKF2->GetMapPointMatches(); // i번째 loop detection candidate keyframe 상의 keypoint와 association의 관계를 가지는 map point
+    const int N2 = vpMapPoints2.size(); // i번째 loop detection candidate keyframe의 keypoint 개수
 
-    vector<bool> vbAlreadyMatched1(N1,false);
-    vector<bool> vbAlreadyMatched2(N2,false);
+    vector<bool> vbAlreadyMatched1(N1,false); // 현재 keyframe의 keypoint 개수만큼 false로 초기화
+    vector<bool> vbAlreadyMatched2(N2,false); // i번째 loop detection candidate keyframe의 keypoint 개수만큼 false로 초기화
 
-    for(int i=0; i<N1; i++)
+    for(int i=0; i<N1; i++) // 현재 keyframe의 keypoint 개수만큼 반복
     {
-        MapPoint* pMP = vpMatches12[i];
-        if(pMP)
+        MapPoint* pMP = vpMatches12[i]; // vpMatches12 -> 현재 keyframe의 i번째 map point - i번째 loop detection candidate keyframe의 i번째 map point correspondences
+        if(pMP) // 해당 map point가 존재하면,
         {
-            vbAlreadyMatched1[i]=true;
-            int idx2 = pMP->GetIndexInKeyFrame(pKF2);
-            if(idx2>=0 && idx2<N2)
-                vbAlreadyMatched2[idx2]=true;
+            vbAlreadyMatched1[i]=true; // 이미 찾아진 correspondence에 대하여,
+            int idx2 = pMP->GetIndexInKeyFrame(pKF2); // 해당 map point와 association의 관계를 가지는 i번째 loop detection candidate keyframe의 keypoint index
+            if(idx2>=0 && idx2<N2) // 0 <= idx2 < N2
+                vbAlreadyMatched2[idx2]=true; // 이미 찾아진 correspondence에 대하여,
         }
     }
 
-    vector<int> vnMatch1(N1,-1);
-    vector<int> vnMatch2(N2,-1);
+    vector<int> vnMatch1(N1,-1); // 현재 keyframe의 keypoint 개수만큼 -1로 초기화
+    vector<int> vnMatch2(N2,-1); // i번째 loop detection candidate keyframe의 keypoint 개수만큼 -1로 초기화
 
+    // Sim3Solver를 통해 구한 similarity transformation을 이용하여, Grid Search를 통해 더 많은 correspondence를 찾는다.
     // Transform from KF1 to KF2 and search
-    for(int i1=0; i1<N1; i1++)
+    
+    // 현재 keyframe의 map point -> loop detection candidate keyframe으로 projection
+    for(int i1=0; i1<N1; i1++) // 현재 keyframe의 keypoint 개수만큼 반복
     {
-        MapPoint* pMP = vpMapPoints1[i1];
+        MapPoint* pMP = vpMapPoints1[i1]; // 현재 keyframe의 i1번째 map point
 
-        if(!pMP || vbAlreadyMatched1[i1])
-            continue;
+        if(!pMP || vbAlreadyMatched1[i1]) // 해당 map point가 존재하지 않거나, 이미 찾아진 correspondences에 해당한다면,
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        if(pMP->isBad())
-            continue;
+        if(pMP->isBad()) // 해당 map point가 나쁘다고 판단하면,
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        cv::Mat p3Dw = pMP->GetWorldPos();
-        cv::Mat p3Dc1 = R1w*p3Dw + t1w;
-        cv::Mat p3Dc2 = sR21*p3Dc1 + t21;
+        cv::Mat p3Dw = pMP->GetWorldPos(); // 절대 좌표계인 world 좌표계 상의 map point의 position
+        cv::Mat p3Dc1 = R1w*p3Dw + t1w; // 현재 keyframe의 world to camera coordinate의 transformation x world 좌표계 상의 map point의 position = 현재 keyframe 상의 map point position
+        cv::Mat p3Dc2 = sR21*p3Dc1 + t21; // (Sim3Solver를 통해 계산한) current keyframe to loop detection candidate keyframe coordinate의 transformation x 현재 keyframe 상의 map point position
+        // = loop detection candidate keyframe 상의 map point position
 
         // Depth must be positive
-        if(p3Dc2.at<float>(2)<0.0)
-            continue;
+        if(p3Dc2.at<float>(2)<0.0) // loop detection candidate keyframe 상의 map point position의 z 값 < 0.0
+            continue; // 해당 루프의 끝으로 이동한다.
 
         const float invz = 1.0/p3Dc2.at<float>(2);
         const float x = p3Dc2.at<float>(0)*invz;
@@ -1231,45 +1284,47 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
         const float v = fy*y+cy;
 
         // Point must be inside the image
-        if(!pKF2->IsInImage(u,v))
-            continue;
+        if(!pKF2->IsInImage(u,v)) // pixel 좌표인 x와 y가 image boundary에 있는 경우 return true, image boundary 밖에 있는 경우 return false
+        // pKF2->IsInImage(u,v) = false -> map point를 loop detection candidate keyframe으로 projection 하였을 때, image boundary를 벗어나는 경우
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        const float maxDistance = pMP->GetMaxDistanceInvariance();
-        const float minDistance = pMP->GetMinDistanceInvariance();
-        const float dist3D = cv::norm(p3Dc2);
+        const float maxDistance = pMP->GetMaxDistanceInvariance(); // 1.2f*mfMaxDistance
+        const float minDistance = pMP->GetMinDistanceInvariance(); // 0.8f*mfMinDistance
+        const float dist3D = cv::norm(p3Dc2); // camera 좌표계 원점에서 해당 map point로의 거리
 
         // Depth must be inside the scale invariance region
         if(dist3D<minDistance || dist3D>maxDistance )
-            continue;
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Compute predicted octave
         const int nPredictedLevel = pMP->PredictScale(dist3D,pKF2);
 
         // Search in a radius
-        const float radius = th*pKF2->mvScaleFactors[nPredictedLevel];
+        const float radius = th*pKF2->mvScaleFactors[nPredictedLevel]; // search window의 크기
 
-        const vector<size_t> vIndices = pKF2->GetFeaturesInArea(u,v,radius);
+        const vector<size_t> vIndices = pKF2->GetFeaturesInArea(u,v,radius); // map point를 loop detection candidate keyframe으로 projection하여 Grid Search를 통해, 해당 map point와 일치하는 keypoint를 search
+        // vIndices -> map point와 correspondence의 관계가 있는 loop detection candidate keyframe의 keypoint index
 
-        if(vIndices.empty())
-            continue;
+        if(vIndices.empty()) // vIndices.empty() = true
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Match to the most similar keypoint in the radius
-        const cv::Mat dMP = pMP->GetDescriptor();
+        const cv::Mat dMP = pMP->GetDescriptor(); // 해당 map point를 가장 잘 표현할 수 있는 representative descriptor
 
         int bestDist = INT_MAX;
         int bestIdx = -1;
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
         {
-            const size_t idx = *vit;
+            const size_t idx = *vit; // de-reference -> map point와 correspondence의 관계가 있는 loop detection candidate keyframe의 keypoint index
 
-            const cv::KeyPoint &kp = pKF2->mvKeysUn[idx];
+            const cv::KeyPoint &kp = pKF2->mvKeysUn[idx]; // loop detection candidate keyframe의 idx번째 keypoint
 
             if(kp.octave<nPredictedLevel-1 || kp.octave>nPredictedLevel)
-                continue;
+                continue; // 해당 루프의 끝으로 이동한다.
 
-            const cv::Mat &dKF = pKF2->mDescriptors.row(idx);
+            const cv::Mat &dKF = pKF2->mDescriptors.row(idx); // loop detection candidate keyframe의 idx번째 keypoint의 descriptor
 
-            const int dist = DescriptorDistance(dMP,dKF);
+            const int dist = DescriptorDistance(dMP,dKF); // 해당 map point를 가장 잘 표현할 수 있는 representative descriptor - loop detection candidate keyframe의 idx번째 keypoint의 descriptor
 
             if(dist<bestDist)
             {
@@ -1278,30 +1333,33 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
             }
         }
 
-        if(bestDist<=TH_HIGH)
+        if(bestDist<=TH_HIGH) // TH_HIGH = 100
         {
-            vnMatch1[i1]=bestIdx;
+            vnMatch1[i1]=bestIdx; // 현재 keyframe의 i1번째 map point와 correspondence의 관계를 갖는 loop detection candidate keyframe의 keypoint index
         }
     }
 
     // Transform from KF2 to KF2 and search
-    for(int i2=0; i2<N2; i2++)
+
+    // loop detection candidate keyframe의 map point -> 현재 keyframe으로 projection
+    for(int i2=0; i2<N2; i2++) // loop detection candidate keyframe의 keypoint 개수만큼 반복
     {
-        MapPoint* pMP = vpMapPoints2[i2];
+        MapPoint* pMP = vpMapPoints2[i2]; // loop detection candidate keyframe의 i2번째 map point
 
-        if(!pMP || vbAlreadyMatched2[i2])
-            continue;
+        if(!pMP || vbAlreadyMatched2[i2]) // 해당 map point가 존재하지 않거나, 이미 찾아진 correspondences에 해당한다면,
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        if(pMP->isBad())
-            continue;
+        if(pMP->isBad()) // 해당 map point가 나쁘다고 판단하면,
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        cv::Mat p3Dw = pMP->GetWorldPos();
-        cv::Mat p3Dc2 = R2w*p3Dw + t2w;
-        cv::Mat p3Dc1 = sR12*p3Dc2 + t12;
+        cv::Mat p3Dw = pMP->GetWorldPos(); // 절대 좌표계인 world 좌표계 상의 map point의 position
+        cv::Mat p3Dc2 = R2w*p3Dw + t2w; // loop detection candidate keyframe의 world to camera coordinate의 transformation x world 좌표계 상의 map point의 position = loop detection candidate keyframe 상의 map point position
+        cv::Mat p3Dc1 = sR12*p3Dc2 + t12; // (Sim3Solver를 통해 계산한) loop detection candidate keyframe to current keyframe coordinate의 transformation x loop detection candidate keyframe 상의 map point position
+        // = current keyframe 상의 map point position
 
         // Depth must be positive
-        if(p3Dc1.at<float>(2)<0.0)
-            continue;
+        if(p3Dc1.at<float>(2)<0.0) // current keyframe 상의 map point position의 z 값 < 0.0
+            continue; // 해당 루프의 끝으로 이동한다.
 
         const float invz = 1.0/p3Dc1.at<float>(2);
         const float x = p3Dc1.at<float>(0)*invz;
@@ -1311,45 +1369,47 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
         const float v = fy*y+cy;
 
         // Point must be inside the image
-        if(!pKF1->IsInImage(u,v))
-            continue;
+        if(!pKF1->IsInImage(u,v)) // pixel 좌표인 x와 y가 image boundary에 있는 경우 return true, image boundary 밖에 있는 경우 return false
+        // pKF1->IsInImage(u,v) = false -> map point를 현재 keyframe으로 projection 하였을 때, image boundary를 벗어나는 경우
+            continue; // 해당 루프의 끝으로 이동한다.
 
-        const float maxDistance = pMP->GetMaxDistanceInvariance();
-        const float minDistance = pMP->GetMinDistanceInvariance();
-        const float dist3D = cv::norm(p3Dc1);
+        const float maxDistance = pMP->GetMaxDistanceInvariance(); // 1.2f*mfMaxDistance
+        const float minDistance = pMP->GetMinDistanceInvariance(); // 0.8f*mfMinDistance
+        const float dist3D = cv::norm(p3Dc1); // camera 좌표계 원점에서 해당 map point로의 거리
 
         // Depth must be inside the scale pyramid of the image
         if(dist3D<minDistance || dist3D>maxDistance)
-            continue;
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Compute predicted octave
         const int nPredictedLevel = pMP->PredictScale(dist3D,pKF1);
 
         // Search in a radius of 2.5*sigma(ScaleLevel)
-        const float radius = th*pKF1->mvScaleFactors[nPredictedLevel];
+        const float radius = th*pKF1->mvScaleFactors[nPredictedLevel]; // search window의 크기
 
-        const vector<size_t> vIndices = pKF1->GetFeaturesInArea(u,v,radius);
+        const vector<size_t> vIndices = pKF1->GetFeaturesInArea(u,v,radius); // map point를 현재 keyframe으로 projection하여 Grid Search를 통해, 해당 map point와 일치하는 keypoint를 search
+        // vIndices -> map point와 correspondence의 관계가 있는 현재 keyframe의 keypoint index
 
-        if(vIndices.empty())
-            continue;
+        if(vIndices.empty()) // vIndices.empty() = true
+            continue; // 해당 루프의 끝으로 이동한다.
 
         // Match to the most similar keypoint in the radius
-        const cv::Mat dMP = pMP->GetDescriptor();
+        const cv::Mat dMP = pMP->GetDescriptor(); // 해당 map point를 가장 잘 표현할 수 있는 representative descriptor
 
         int bestDist = INT_MAX;
         int bestIdx = -1;
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
         {
-            const size_t idx = *vit;
+            const size_t idx = *vit; // de-reference -> map point와 correspondence의 관계가 있는 현재 keyframe의 keypoint index
 
-            const cv::KeyPoint &kp = pKF1->mvKeysUn[idx];
+            const cv::KeyPoint &kp = pKF1->mvKeysUn[idx]; // 현재 keyframe의 idx번째 keypoint
 
             if(kp.octave<nPredictedLevel-1 || kp.octave>nPredictedLevel)
-                continue;
+                continue; // 해당 루프의 끝으로 이동한다.
 
-            const cv::Mat &dKF = pKF1->mDescriptors.row(idx);
+            const cv::Mat &dKF = pKF1->mDescriptors.row(idx); // 현재 keyframe의 idx번째 keypoint의 descriptor
 
-            const int dist = DescriptorDistance(dMP,dKF);
+            const int dist = DescriptorDistance(dMP,dKF); // 해당 map point를 가장 잘 표현할 수 있는 representative descriptor - 현재 keyframe의 idx번째 keypoint의 descriptor
 
             if(dist<bestDist)
             {
@@ -1358,23 +1418,23 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
             }
         }
 
-        if(bestDist<=TH_HIGH)
+        if(bestDist<=TH_HIGH) // TH_HIGH = 100
         {
-            vnMatch2[i2]=bestIdx;
+            vnMatch2[i2]=bestIdx; // loop detection candidate keyframe의 i2번째 map point와 correspondence의 관계를 갖는 현재 keyframe의 keypoint index
         }
     }
 
     // Check agreement
     int nFound = 0;
 
-    for(int i1=0; i1<N1; i1++)
+    for(int i1=0; i1<N1; i1++) // 현재 keyframe의 keypoint 개수만큼 반복
     {
-        int idx2 = vnMatch1[i1];
+        int idx2 = vnMatch1[i1]; // 현재 keyframe의 i1번째 map point와 correspondence의 관계를 갖는 loop detection candidate keyframe의 keypoint index
 
         if(idx2>=0)
         {
-            int idx1 = vnMatch2[idx2];
-            if(idx1==i1)
+            int idx1 = vnMatch2[idx2]; // loop detection candidate keyframe의 i2번째 map point와 correspondence의 관계를 갖는 현재 keyframe의 keypoint index
+            if(idx1==i1) // 현재 keyframe의 map point = loop detection candidate keyframe의 map point
             {
                 vpMatches12[i1] = vpMapPoints2[idx2];
                 nFound++;
@@ -1382,7 +1442,7 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
         }
     }
 
-    return nFound;
+    return nFound; // 현재 keyframe의 map point와 loop detection candidate keyframe의 map point와의 새롭게 찾아진 correspondence
 }
 
 // SearchByProjection(mCurrentFrame,mLastFrame,th,mSensor==System::MONOCULAR)

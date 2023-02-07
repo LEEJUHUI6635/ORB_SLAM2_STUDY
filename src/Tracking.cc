@@ -1525,13 +1525,13 @@ bool Tracking::Relocalization()
             // 현재 frame의 map point는 알 수 없다. i번째 relocalization candidate keyframe의 keypoint와 현재 frame의 keypoint와의 association 관계(BoW의 두 번째 기능)를 통해, 현재 frame의 keypoint에 해당하는 map point를 얻을 수 있다.
             int nmatches = matcher.SearchByBoW(pKF,mCurrentFrame,vvpMapPointMatches[i]); // nmatches -> SearchByBoW를 통해 구한 현재 frame의 map points
         
-            if(nmatches<15) // i번째 relocalization keyframe candidate keyframe의 map point와 유사한 현재 frame의 map point가 15개 미만이라면,
+            if(nmatches<15) // i번째 relocalization keyframe candidate의 map point와 유사한 현재 frame의 map point가 15개 미만이라면,
             {
                 vbDiscarded[i] = true; // i번째의 relocalization candidate keyframe discard 여부 = true
                 continue; // 루프의 끝으로 이동한다. -> i번째의 relocalization candidate keyframe은 고려 x
             }
             // nmatches >= 15
-            else // i번째 relocalization keyframe candidate keyframe의 map point와 유사한 현재 frame의 map point가 15개 이상이라면,
+            else // i번째 relocalization keyframe candidate의 map point와 유사한 현재 frame의 map point가 15개 이상이라면,
             {
                 // 현재 frame의 2D points - i번째 relocalization keyframe candidate keyframe의 map point와 유사한 현재 frame의 map points(3D)
                 PnPsolver* pSolver = new PnPsolver(mCurrentFrame,vvpMapPointMatches[i]); // PnPsolver(const Frame &F, const vector<MapPoint*> &vpMapPointMatches)
